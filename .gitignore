@@ -5,8 +5,9 @@
 .vscode/
 __pycache__/
 /hovsg.egg-info
-/data/hm3dsem_walks
-/data/scene_graphs
+/data/*
+!/data/.gitkeep
 /outputs
-checkpoints/
+/checkpoints/*
+!/checkpoints/.gitkeep
 output_*/
