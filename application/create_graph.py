@@ -66,12 +66,12 @@ def main(params: DictConfig):
     hovsg.save_masked_pcds(path=save_dir, state="both")
     hovsg.save_full_pcd(path=save_dir)
     hovsg.save_full_pcd_feats(path=save_dir)
-    
+
     # for debugging: load preconstructed map as follows
     # hovsg.load_full_pcd(path=save_dir)
     # hovsg.load_full_pcd_feats(path=save_dir)
     # hovsg.load_masked_pcds(path=save_dir)
-    
+
     # create graph, only if dataset is not Replia or ScanNet
     print(params.main.dataset)
     if params.main.dataset != "replica" and params.main.dataset != "scannet" and params.pipeline.create_graph:

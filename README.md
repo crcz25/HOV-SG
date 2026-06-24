@@ -63,6 +63,19 @@ docker compose -f .devcontainer/docker-compose.yml build
 docker compose -f .devcontainer/docker-compose.yml up -d
 ```
 
+For GUI rendering on a Linux/X11 host, allow the container user to connect to
+the host display before starting or rebuilding the container:
+```bash
+xhost +SI:localuser:$(id -un)
+```
+
+The compose service forwards `DISPLAY` and mounts `/tmp/.X11-unix`, so GUI
+tools such as Matplotlib, Open3D, and PyVista can open windows on the host X
+server. Revoke the display permission when you are done:
+```bash
+xhost -SI:localuser:$(id -un)
+```
+
 Open in VS Code:
 1. Open this repository folder in VS Code.
 2. Run `Dev Containers: Reopen in Container` from the Command Palette.
