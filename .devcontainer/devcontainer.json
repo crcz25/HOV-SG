@@ -1,0 +1,35 @@
+{
+  "name": "HOV-SG CUDA",
+  "dockerComposeFile": "docker-compose.yml",
+  "service": "hovsg-dev",
+  "workspaceFolder": "/workspace/HOV-SG",
+  "shutdownAction": "stopCompose",
+  "overrideCommand": false,
+  "remoteUser": "vscode",
+  "updateRemoteUserUID": true,
+  "postCreateCommand": "bash .devcontainer/post_create.sh",
+  "containerEnv": {
+    "CONDA_DEFAULT_ENV": "hovsg",
+    "MAMBA_ROOT_PREFIX": "/opt/conda",
+    "PYTHONUNBUFFERED": "1"
+  },
+  "remoteEnv": {
+    "PATH": "/opt/conda/envs/hovsg/bin:/opt/conda/bin:${containerEnv:PATH}",
+    "PYTHONPATH": "/workspace/HOV-SG:${containerEnv:PYTHONPATH}"
+  },
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "ms-python.python",
+        "ms-python.vscode-pylance",
+        "ms-toolsai.jupyter",
+        "ms-azuretools.vscode-docker"
+      ],
+      "settings": {
+        "python.defaultInterpreterPath": "/opt/conda/envs/hovsg/bin/python",
+        "python.terminal.activateEnvironment": true,
+        "terminal.integrated.defaultProfile.linux": "bash"
+      }
+    }
+  }
+}

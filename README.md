@@ -40,6 +40,57 @@ conda install habitat-sim -c conda-forge -c aihabitat
 pip install -e .
 ```
 
+### VS Code Dev Container with CUDA/NVIDIA GPU support
+This repository includes a VS Code Dev Containers setup under `.devcontainer/`.
+It uses `nvidia/cuda:12.9.2-cudnn-runtime-ubuntu24.04` as the base image,
+creates the `hovsg` conda environment, installs Habitat-Sim and the Python
+dependencies used by the project, and runs `pip install -e .` automatically
+after the workspace is mounted.
+The container creates `/opt/conda/envs/hovsg` directly from the repository
+`environment.yaml`. For newer NVIDIA GPUs such as RTX 50-series cards, the
+environment keeps Python 3.9 for Habitat-Sim compatibility and installs
+PyTorch `2.8.0+cu128`, torchvision `0.23.0+cu128`, and torchaudio
+`2.8.0+cu128` from the CUDA 12.8 wheel index.
+
+Host requirements:
+- Docker with the Compose v2 plugin.
+- The NVIDIA driver and NVIDIA Container Toolkit installed on the host.
+- VS Code with the Dev Containers extension.
+
+Build and start from a terminal:
+```bash
+docker compose -f .devcontainer/docker-compose.yml build
+docker compose -f .devcontainer/docker-compose.yml up -d
+```
+
+Open in VS Code:
+1. Open this repository folder in VS Code.
+2. Run `Dev Containers: Reopen in Container` from the Command Palette.
+3. VS Code will build the image if needed, start the compose service, mount the
+   repository at `/workspace/HOV-SG`, and use `/opt/conda/envs/hovsg/bin/python`
+   as the Python interpreter.
+
+The project source is bind-mounted from the host, so edits made inside the
+container persist in the repository checkout. The top-level host `data/` and
+`checkpoints/` directories are also bind-mounted explicitly to
+`/workspace/HOV-SG/data` and `/workspace/HOV-SG/checkpoints`; place HM3DSem,
+Replica, ScanNet, generated scene graphs, and model checkpoints there instead
+of baking them into the image. Model checkpoints are not downloaded by the image
+build; download the OpenCLIP and SAM checkpoints into `checkpoints/` using the
+commands below when needed.
+
+Verify GPU access inside the container:
+```bash
+nvidia-smi
+python - <<'PY'
+import torch
+
+print(torch.__version__)
+print(torch.cuda.is_available())
+print(torch.cuda.get_device_name(0) if torch.cuda.is_available() else "no CUDA device")
+PY
+```
+
 ### OpenCLIP
 HOV-SG uses the Open CLIP model to extract features from RGB-D frames. To download the Open CLIP model checkpoint `CLIP-ViT-H-14-laion2B-s32B-b79K` please refer to [Open CLIP](https://huggingface.co/laion/CLIP-ViT-H-14-laion2B-s32B-b79K).
 ```bash
@@ -212,8 +263,13 @@ The Data folder should have the following structure:
 
 ### Create scene graphs (only for Habitat Matterport 3D Semantics):
 ```bash
-python application/create_graph.py main.dataset=hm3dsem main.dataset_path=data/hm3dsem_walks/val/00824-Dd4bFSTQ8gi/ main.save_path=data/scene_graphs/00824-Dd4bFSTQ8gi
+python application/create_graph.py main.dataset=hm3dsem main.dataset_path=data/hm3dsem_walks main.split=val main.scene_id=00824-Dd4bFSTQ8gi main.save_path=data/scene_graphs
 ```
+
+`main.dataset_path` can point to the dataset root (`data/hm3dsem_walks`), the
+split directory (`data/hm3dsem_walks/val`), or the exact scene directory
+(`data/hm3dsem_walks/val/00824-Dd4bFSTQ8gi`). When using the dataset root or
+split directory, pass the scene with `main.scene_id`.
 <details>
   <summary>This will generate a scene graph for the specified RGB-D sequence and save it. The following files are generated:</summary>
 

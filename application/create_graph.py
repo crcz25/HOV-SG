@@ -6,12 +6,55 @@ from hovsg.graph.graph import Graph
 # pylint: disable=all
 
 
+def _is_scene_dir(path):
+    return all(os.path.isdir(os.path.join(path, name)) for name in ("rgb", "depth", "pose"))
+
+
+def _resolve_dataset_path(dataset_path, split, scene_id):
+    dataset_path = os.path.normpath(os.path.expanduser(str(dataset_path)))
+    split = str(split)
+    scene_id = str(scene_id)
+
+    candidates = [
+        dataset_path,
+        os.path.join(dataset_path, scene_id),
+        os.path.join(dataset_path, split, scene_id),
+    ]
+
+    for candidate in candidates:
+        if _is_scene_dir(candidate):
+            return candidate, os.path.basename(candidate)
+
+    return candidates[-1], scene_id
+
+
+def _resolve_save_path(save_path, dataset, scene_id):
+    save_path = os.path.normpath(os.path.expanduser(str(save_path)))
+    dataset = str(dataset)
+    scene_id = str(scene_id)
+
+    if os.path.basename(save_path) == scene_id:
+        return save_path
+
+    if os.path.basename(os.path.dirname(save_path)) == dataset and os.path.basename(save_path) == scene_id:
+        return save_path
+
+    return os.path.join(save_path, dataset, scene_id)
+
+
 @hydra.main(version_base=None, config_path="../config", config_name="create_graph")
 def main(params: DictConfig):
     # create logging directory
-    save_dir = os.path.join(params.main.save_path, params.main.dataset, params.main.scene_id)
+    dataset_path, scene_id = _resolve_dataset_path(
+        params.main.dataset_path,
+        params.main.split,
+        params.main.scene_id,
+    )
+    params.main.scene_id = scene_id
+    params.main.dataset_path = dataset_path
+
+    save_dir = _resolve_save_path(params.main.save_path, params.main.dataset, params.main.scene_id)
     params.main.save_path = save_dir
-    params.main.dataset_path = os.path.join(params.main.dataset_path, params.main.split, params.main.scene_id)
     if not os.path.exists(save_dir):
         os.makedirs(save_dir, exist_ok=True)
 

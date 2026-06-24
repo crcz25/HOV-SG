@@ -10,7 +10,8 @@ import time
 from typing import Dict, List, Tuple, Union, Any
 
 import cv2
-import matplotlib.pyplot as plt
+import matplotlib
+matplotlib.use("TkAgg" if os.environ.get("DISPLAY") else "Agg")
 import networkx as nx
 from networkx.readwrite import json_graph
 import numpy as np
@@ -29,8 +30,7 @@ from hovsg.graph.object import Object
 from hovsg.utils.constants import MATTERPORT_LABELS_40
 from hovsg.utils.clip_utils import get_text_feats_62_templates
 
-# change matplotlib backend to a gui one
-plt.switch_backend("TkAgg")
+import matplotlib.pyplot as plt
 
 
 def compute_sdf(boundary_mask, distance_scale=1):
