@@ -57,6 +57,25 @@ class PanopticObject:
         return f"{self.floor_id}_{self.region_id}_{self.id}"
 
 
+def habitat_attr_value(value):
+    value = value() if callable(value) else value
+    if isinstance(value, np.ndarray):
+        return value.tolist()
+    if isinstance(value, np.generic):
+        return value.item()
+    if isinstance(value, dict):
+        return {key: habitat_attr_value(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [habitat_attr_value(item) for item in value]
+    if hasattr(value, "tolist"):
+        return habitat_attr_value(value.tolist())
+    if hasattr(value, "__len__") and hasattr(value, "__getitem__") and not isinstance(value, (str, bytes)):
+        return [habitat_attr_value(value[idx]) for idx in range(len(value))]
+    if hasattr(value, "__iter__") and not isinstance(value, (str, bytes)):
+        return [habitat_attr_value(item) for item in value]
+    return value
+
+
 def rgb2hex(color_array):
     color_array = color_array * 255
     return "#%02x%02x%02x" % (int(color_array[0]), int(color_array[1]), int(color_array[2]))
@@ -153,15 +172,15 @@ class PanopticScene:
             obj_id = int(obj.id.split("_")[1])
 
             if obj_id in self.id2obj_idx:
-                self.objects[self.id2obj_idx[obj_id]].aabb_center = obj.aabb.center.tolist()
-                self.objects[self.id2obj_idx[obj_id]].aabb_dims = obj.aabb.sizes.tolist()
-                self.objects[self.id2obj_idx[obj_id]].obb_center = obj.obb.center.tolist()
-                self.objects[self.id2obj_idx[obj_id]].obb_dims = obj.obb.sizes.tolist()
-                self.objects[self.id2obj_idx[obj_id]].obb_rotation = obj.obb.rotation.tolist()
-                self.objects[self.id2obj_idx[obj_id]].obb_local_to_world = obj.obb.local_to_world.tolist()
-                self.objects[self.id2obj_idx[obj_id]].obb_world_to_local = obj.obb.world_to_local.tolist()
-                self.objects[self.id2obj_idx[obj_id]].obb_volume = obj.obb.volume
-                self.objects[self.id2obj_idx[obj_id]].obb_half_extents = obj.obb.half_extents.tolist()
+                self.objects[self.id2obj_idx[obj_id]].aabb_center = habitat_attr_value(obj.aabb.center)
+                self.objects[self.id2obj_idx[obj_id]].aabb_dims = habitat_attr_value(obj.aabb.size)
+                self.objects[self.id2obj_idx[obj_id]].obb_center = habitat_attr_value(obj.obb.center)
+                self.objects[self.id2obj_idx[obj_id]].obb_dims = habitat_attr_value(obj.obb.sizes)
+                self.objects[self.id2obj_idx[obj_id]].obb_rotation = habitat_attr_value(obj.obb.rotation)
+                self.objects[self.id2obj_idx[obj_id]].obb_local_to_world = habitat_attr_value(obj.obb.local_to_world)
+                self.objects[self.id2obj_idx[obj_id]].obb_world_to_local = habitat_attr_value(obj.obb.world_to_local)
+                self.objects[self.id2obj_idx[obj_id]].obb_volume = habitat_attr_value(obj.obb.volume)
+                self.objects[self.id2obj_idx[obj_id]].obb_half_extents = habitat_attr_value(obj.obb.half_extents)
 
     def get_object(self, key):
         if isinstance(key, str):
@@ -316,7 +335,7 @@ class PanopticScene:
 
         # save scene info as JSON
         with open(os.path.join(save_dir, "scene_info.json"), "w") as file:
-            json.dump(self.scene_info, file)
+            json.dump(self.scene_info, file, default=habitat_attr_value)
 
 
 def read_camera_pose_hmp3d(file_path):
@@ -404,6 +423,33 @@ def id2rgb(id_map):
     return color
 
 
+def validate_hm3dsem_inputs(dataset_dir, walks_path, split, scene_dir, scene_name):
+    raw_scene_dir = os.path.join(dataset_dir, split, scene_dir)
+    expected_paths = {
+        "Habitat scene mesh": os.path.join(raw_scene_dir, scene_name + ".basis.glb"),
+        "semantic labels": os.path.join(raw_scene_dir, scene_name + ".semantic.txt"),
+        "scene dataset config": os.path.join(dataset_dir, "hm3d_annotated_basis.scene_dataset_config.json"),
+        "walk RGB directory": os.path.join(walks_path, split, scene_dir, "rgb"),
+        "walk depth directory": os.path.join(walks_path, split, scene_dir, "depth"),
+        "walk semantic directory": os.path.join(walks_path, split, scene_dir, "semantic"),
+        "walk pose directory": os.path.join(walks_path, split, scene_dir, "pose"),
+    }
+    missing = [f"- {label}: {path}" for label, path in expected_paths.items() if not os.path.exists(path)]
+    if missing:
+        hint = (
+            "Expected the HM3DSEM raw dataset layout to look like:\n"
+            "  <raw_data_path>/hm3d_annotated_basis.scene_dataset_config.json\n"
+            "  <raw_data_path>/<split>/<scene_id>/<scene_name>.basis.glb\n"
+            "  <raw_data_path>/<split>/<scene_id>/<scene_name>.semantic.txt\n\n"
+            "If you are using the tarballs in this repo, extract them with:\n"
+            "  mkdir -p data/hm3d/val\n"
+            "  tar -xf data/hm3d-val-habitat-v0.2.tar -C data/hm3d/val\n"
+            "  tar -xf data/hm3d-val-semantic-annots-v0.2.tar -C data/hm3d/val\n"
+            "  tar -xf data/hm3d-val-semantic-configs-v0.2.tar -C data/hm3d\n"
+        )
+        raise FileNotFoundError("Missing HM3DSEM inputs:\n" + "\n".join(missing) + "\n\n" + hint)
+
+
 def parse_semantics(scene_dir, scene_mesh, txt_path, raw_scene_dir, dataset_dir, scene_name):
 
     sim_settings = {
@@ -463,6 +509,8 @@ def main(params: DictConfig):
     split = params.main.split
     scene_dir = params.main.scene_id
     scene_name = scene_dir.split("-")[-1]
+
+    validate_hm3dsem_inputs(dataset_dir, walks_path, split, scene_dir, scene_name)
 
     raw_scene_dir = "{}/{}/{}/".format(dataset_dir, split, scene_dir)
     scene_mesh = os.path.join(raw_scene_dir, scene_name + ".glb")
