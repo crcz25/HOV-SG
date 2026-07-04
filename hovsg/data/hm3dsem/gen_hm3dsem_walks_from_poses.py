@@ -84,60 +84,67 @@ def main():
         os.environ["MAGNUM_LOG"] = "quiet"
         os.environ["HABITAT_SIM_LOG"] = "quiet"
 
-        sim_cfg = make_cfg(sim_settings, root_dataset_dir, scene_data_dir, scene_name)
-        sim = habitat_sim.Simulator(sim_cfg)
-        scene = sim.semantic_scene
-        print(scene.semantic_index_map)
+        sim = None
+        try:
+            sim_cfg = make_cfg(sim_settings, root_dataset_dir, scene_data_dir, scene_name)
+            sim = habitat_sim.Simulator(sim_cfg)
+            scene = sim.semantic_scene
+            print(scene.semantic_index_map)
 
-        # # initialize the agent
-        agent = sim.initialize_agent(sim_settings["default_agent"])
-        agent_state = habitat_sim.AgentState()
-        random_pt = sim.pathfinder.get_random_navigable_point()
-        agent_state.position = random_pt
-        agent.set_state(agent_state)
+            # # initialize the agent
+            agent = sim.initialize_agent(sim_settings["default_agent"])
+            agent_state = habitat_sim.AgentState()
+            random_pt = sim.pathfinder.get_random_navigable_point()
+            agent_state.position = random_pt
+            agent.set_state(agent_state)
 
-        agent_state = agent.get_state()
-        print(
-            "agent_state: position",
-            agent_state.position,
-            "rotation",
-            agent_state.rotation,
-        )
-
-        init_agent_state = agent_state
-        actions_list = []
-
-        agent_height = agent_state.position[1]
-        obs = sim.get_sensor_observations(0)
-        last_action = None
-        release_count = 0
-
-        pose_file = os.path.join(args.pose_dir, scene_dir + ".txt")
-        poses_list = load_poses_from_file(pose_file)
-
-        pbar = tqdm(poses_list, total=len(poses_list), desc="saving frames")
-        steps = 0
-        for pose in pbar:
-            pbar.set_description(f"saving frame {steps}/{len(poses_list) + 1}")
-            agent = sim.get_agent(0)
             agent_state = agent.get_state()
-            agent_state.sensor_states["color_sensor"].position = pose[:3]
-            agent_state.sensor_states["color_sensor"].rotation = pose[3:]
-            agent_state.sensor_states["depth_sensor"].position = pose[:3]
-            agent_state.sensor_states["depth_sensor"].rotation = pose[3:]
-            agent_state.sensor_states["semantic"].position = pose[:3]
-            agent_state.sensor_states["semantic"].rotation = pose[3:]
-            agent.set_state(agent_state, reset_sensors=True, infer_sensor_states=False)
+            print(
+                "agent_state: position",
+                agent_state.position,
+                "rotation",
+                agent_state.rotation,
+            )
+
+            init_agent_state = agent_state
+            actions_list = []
+
+            agent_height = agent_state.position[1]
             obs = sim.get_sensor_observations(0)
-            rgb = obs["color_sensor"]
-            depth = obs["depth_sensor"]
-            depth = ((depth / 10) * 255).astype(np.uint8)
-            semantic = obs["semantic"]
-            # cv2.imshow("rgb", rgb)
-            # cv2.imshow("depth", depth)
-            # cv2.waitKey()
-            save_obs(save_dir, sim_settings, obs, pose, steps)
-            steps += 1
+            last_action = None
+            release_count = 0
+
+            pose_file = os.path.join(args.pose_dir, scene_dir + ".txt")
+            poses_list = load_poses_from_file(pose_file)
+
+            pbar = tqdm(poses_list, total=len(poses_list), desc="saving frames")
+            steps = 0
+            for pose in pbar:
+                pbar.set_description(f"saving frame {steps}/{len(poses_list) + 1}")
+                agent = sim.get_agent(0)
+                agent_state = agent.get_state()
+                agent_state.sensor_states["color_sensor"].position = pose[:3]
+                agent_state.sensor_states["color_sensor"].rotation = pose[3:]
+                agent_state.sensor_states["depth_sensor"].position = pose[:3]
+                agent_state.sensor_states["depth_sensor"].rotation = pose[3:]
+                agent_state.sensor_states["semantic"].position = pose[:3]
+                agent_state.sensor_states["semantic"].rotation = pose[3:]
+                agent.set_state(agent_state, reset_sensors=True, infer_sensor_states=False)
+                obs = sim.get_sensor_observations(0)
+                rgb = obs["color_sensor"]
+                depth = obs["depth_sensor"]
+                depth = ((depth / 10) * 255).astype(np.uint8)
+                semantic = obs["semantic"]
+                # cv2.imshow("rgb", rgb)
+                # cv2.imshow("depth", depth)
+                # cv2.waitKey()
+                save_obs(save_dir, sim_settings, obs, pose, steps)
+                steps += 1
+        finally:
+            # Explicitly release GL context before loading the next scene.
+            if sim is not None:
+                sim.close()
+                del sim
 
 
 if __name__ == "__main__":
