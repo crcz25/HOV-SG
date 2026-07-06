@@ -78,7 +78,7 @@ def main(params: DictConfig):
     
     for node in hovsg.graph.nodes:
         if type(node) == Object:
-            name = hovsg.identify_object(node.embedding, text_feats, classes)
+            name, _, _ = hovsg.identify_object(node.embedding, text_feats, classes)
             node.name = name
     evaluator.evaluate_floors(hovsg.graph)
     evaluator.evaluate_rooms(hovsg.graph)

@@ -53,6 +53,7 @@ from hovsg.utils.graph_utils import (
 
 from hovsg.graph.navigation_graph import NavigationGraph
 from hovsg.utils.label_feats import get_label_feats
+from hovsg.utils.uncertainty import compute_label_uncertainty
 from hovsg.utils.constants import MATTERPORT_GT_LABELS, CLIP_DIM
 from hovsg.utils.llm_utils import (
     parse_floor_room_object_gpt35,
@@ -78,6 +79,8 @@ class Graph:
         self.mask_pcds = []
         self.mask_weights = []
         self.objects = []
+        self.label_text_feats = None
+        self.label_classes = None
         self.rooms = []
         self.floors = []
         self.full_feats_array = []
@@ -583,11 +586,16 @@ class Graph:
         :param object_feat: np.ndarray, The object feature
         :param text_feats: np.ndarray, The text features
         :param classes: List, The list of classes
-        :return: str, The object class
+        :return: tuple, The object class, its row index, and all similarities
         """
+        object_feat = np.asarray(object_feat)
+        object_norm = np.linalg.norm(object_feat)
+        if object_norm >= 1e-8:
+            object_feat = object_feat / object_norm
         similarity = np.dot(object_feat, text_feats.T)
         # find the class with the highest similarity
-        return classes[np.argmax(similarity)]
+        label_idx = int(np.argmax(similarity))
+        return classes[label_idx], label_idx, similarity
 
     def segment_objects(self, save_dir: str = None):
         """
@@ -602,6 +610,8 @@ class Graph:
             self.cfg.pipeline.obj_labels,
             self.cfg.main.save_path,
         )
+        self.label_text_feats = text_feats
+        self.label_classes = classes
 
         pbar = tqdm(enumerate(self.floors), total=len(self.floors), desc="Floor: ")
         margin = 0.2
@@ -681,26 +691,67 @@ class Graph:
 
                 closest_room_idx = np.argmax(room_assoc)
 
-                name = self.identify_object(
-                    self.mask_feats[mask_idx], text_feats, classes
-                )
-                # if [i for i in ["wall", "floor", "ceiling", "window", "door", "roof", "railing"] if i in name]:
-                #     continue
                 parent_room = floor.rooms[closest_room_idx]
                 object = Object(
                     parent_room.room_id + "_" + str(parent_room.object_counter),
                     parent_room.room_id,
                 )
                 parent_room.object_counter += 1
+                object.embedding = np.asarray(self.mask_feats[mask_idx])
+                embedding_norm = np.linalg.norm(object.embedding)
+                if embedding_norm >= 1e-8:
+                    object.embedding = object.embedding / embedding_norm
+                name, label_idx, similarity = self.identify_object(
+                    object.embedding, text_feats, classes
+                )
                 object.name = name
+                object.label_idx = label_idx
+                similarity, object.semantic_uncertainty = compute_label_uncertainty(
+                    object.embedding,
+                    text_feats,
+                    self.cfg.pipeline.semantic_uncertainty_temperature,
+                    similarity=similarity,
+                )
+                object.label_cos_sim = float(similarity[label_idx])
+                # if [i for i in ["wall", "floor", "ceiling", "window", "door", "roof", "railing"] if i in name]:
+                #     continue
                 obj_pbar.set_description(
                     f"object name: {object.name}, {object.object_id}"
                 )
                 object.pcd = self.mask_pcds[mask_idx]
                 object.vertices = np.array(self.mask_pcds[mask_idx].points)[:, [0, 2]]
-                object.embedding = self.mask_feats[mask_idx]
                 floor.rooms[closest_room_idx].add_object(object)
                 self.objects.append(object)
+
+    def recompute_semantic_uncertainty(self):
+        """Refresh object uncertainty after object embeddings have been merged."""
+        if self.label_text_feats is None or self.label_classes is None:
+            raise RuntimeError(
+                "Object label features must be loaded before recomputing uncertainty"
+            )
+
+        temperature = self.cfg.pipeline.semantic_uncertainty_temperature
+        for object in self.objects:
+            label_idx = getattr(object, "label_idx", None)
+            if label_idx is None:
+                matching_indices = [
+                    idx
+                    for idx, class_name in enumerate(self.label_classes)
+                    if class_name == object.name
+                ]
+                if len(matching_indices) != 1:
+                    raise ValueError(
+                        f"Cannot uniquely recover the label index for object {object.object_id}"
+                    )
+                label_idx = matching_indices[0]
+                object.label_idx = label_idx
+
+            similarity, object.semantic_uncertainty = compute_label_uncertainty(
+                object.embedding,
+                self.label_text_feats,
+                temperature,
+            )
+            object.label_cos_sim = float(similarity[label_idx])
 
     def create_graph(self):
         """
@@ -828,6 +879,8 @@ class Graph:
                 print(" number of objects before merging: ", len(room.objects))
                 room.merge_objects()
                 print(" number of objects after merging: ", len(room.objects))
+
+        self.recompute_semantic_uncertainty()
 
         print("creating graph...")
         self.create_graph()
