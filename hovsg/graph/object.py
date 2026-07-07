@@ -24,6 +24,7 @@ class Object:
         self.room_id = room_id  # Identifier of the room this object belongs to
         self.name = name  # Name of the object (e.g., "Chair", "Table")
         self.gt_name = None
+        self.label_idx = None
         self.label_cos_sim = None
         self.semantic_uncertainty = None
 
@@ -48,6 +49,7 @@ class Object:
             "room_id": self.room_id,
             "name": self.name,
             "embedding": self.embedding.tolist() if self.embedding is not None else "",
+            "label_idx": int(self.label_idx) if self.label_idx is not None else None,
             "label_cos_sim": (
                 float(self.label_cos_sim) if self.label_cos_sim is not None else None
             ),
@@ -74,6 +76,7 @@ class Object:
             self.room_id = metadata["room_id"]
             self.name = metadata["name"]
             self.embedding = np.asarray(metadata["embedding"]) if metadata["embedding"] != "" else None
+            self.label_idx = metadata.get("label_idx")
             self.label_cos_sim = metadata.get("label_cos_sim")
             self.semantic_uncertainty = metadata.get("semantic_uncertainty")
 
@@ -90,7 +93,7 @@ class Object:
         self.vertices = self.pcd.get_axis_aligned_bounding_box().get_box_points()
         self.embedding = np.mean([self.embedding, other.embedding], axis=0)
         embedding_norm = np.linalg.norm(self.embedding)
-        if embedding_norm >= 1e-8:
+        if embedding_norm > 1e-8:
             self.embedding = self.embedding / embedding_norm
         self.label_cos_sim = None
         self.semantic_uncertainty = None

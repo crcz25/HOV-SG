@@ -53,7 +53,10 @@ from hovsg.utils.graph_utils import (
 
 from hovsg.graph.navigation_graph import NavigationGraph
 from hovsg.utils.label_feats import get_label_feats
-from hovsg.utils.uncertainty import compute_label_uncertainty
+from hovsg.utils.uncertainty import (
+    compute_cosine_similarities,
+    compute_semantic_uncertainty,
+)
 from hovsg.utils.constants import MATTERPORT_GT_LABELS, CLIP_DIM
 from hovsg.utils.llm_utils import (
     parse_floor_room_object_gpt35,
@@ -81,6 +84,7 @@ class Graph:
         self.objects = []
         self.label_text_feats = None
         self.label_classes = None
+        self.semantic_uncertainty_logit_scale = None
         self.rooms = []
         self.floors = []
         self.full_feats_array = []
@@ -588,11 +592,7 @@ class Graph:
         :param classes: List, The list of classes
         :return: tuple, The object class, its row index, and all similarities
         """
-        object_feat = np.asarray(object_feat)
-        object_norm = np.linalg.norm(object_feat)
-        if object_norm >= 1e-8:
-            object_feat = object_feat / object_norm
-        similarity = np.dot(object_feat, text_feats.T)
+        similarity = compute_cosine_similarities(object_feat, text_feats)
         # find the class with the highest similarity
         label_idx = int(np.argmax(similarity))
         return classes[label_idx], label_idx, similarity
@@ -612,6 +612,9 @@ class Graph:
         )
         self.label_text_feats = text_feats
         self.label_classes = classes
+        self.semantic_uncertainty_logit_scale = float(
+            self.cfg.pipeline.get("semantic_uncertainty_logit_scale", 100.0)
+        )
 
         pbar = tqdm(enumerate(self.floors), total=len(self.floors), desc="Floor: ")
         margin = 0.2
@@ -706,13 +709,17 @@ class Graph:
                 )
                 object.name = name
                 object.label_idx = label_idx
-                similarity, object.semantic_uncertainty = compute_label_uncertainty(
+                (
+                    similarity,
+                    object.semantic_uncertainty,
+                    object.label_cos_sim,
+                ) = compute_semantic_uncertainty(
                     object.embedding,
                     text_feats,
-                    self.cfg.pipeline.semantic_uncertainty_temperature,
+                    label_idx=label_idx,
+                    logit_scale=self.semantic_uncertainty_logit_scale,
                     similarity=similarity,
                 )
-                object.label_cos_sim = float(similarity[label_idx])
                 # if [i for i in ["wall", "floor", "ceiling", "window", "door", "roof", "railing"] if i in name]:
                 #     continue
                 obj_pbar.set_description(
@@ -730,28 +737,46 @@ class Graph:
                 "Object label features must be loaded before recomputing uncertainty"
             )
 
-        temperature = self.cfg.pipeline.semantic_uncertainty_temperature
+        logit_scale = self.semantic_uncertainty_logit_scale
+        if logit_scale is None:
+            logit_scale = float(
+                self.cfg.pipeline.get("semantic_uncertainty_logit_scale", 100.0)
+            )
+
         for object in self.objects:
             label_idx = getattr(object, "label_idx", None)
+            similarity, object.semantic_uncertainty = compute_semantic_uncertainty(
+                object.embedding,
+                self.label_text_feats,
+                logit_scale=logit_scale,
+            )
+
+            if label_idx is not None and not (
+                0 <= int(label_idx) < len(self.label_classes)
+            ):
+                label_idx = None
+                object.label_idx = None
+
             if label_idx is None:
                 matching_indices = [
                     idx
                     for idx, class_name in enumerate(self.label_classes)
                     if class_name == object.name
                 ]
-                if len(matching_indices) != 1:
-                    raise ValueError(
-                        f"Cannot uniquely recover the label index for object {object.object_id}"
-                    )
-                label_idx = matching_indices[0]
-                object.label_idx = label_idx
+                if len(matching_indices) == 1:
+                    label_idx = matching_indices[0]
+                elif matching_indices and np.allclose(
+                    similarity[matching_indices], similarity[matching_indices[0]]
+                ):
+                    # Duplicate aliases are safe only when their text rows agree.
+                    label_idx = matching_indices[0]
 
-            similarity, object.semantic_uncertainty = compute_label_uncertainty(
-                object.embedding,
-                self.label_text_feats,
-                temperature,
+                if label_idx is not None:
+                    object.label_idx = int(label_idx)
+
+            object.label_cos_sim = (
+                float(similarity[int(label_idx)]) if label_idx is not None else None
             )
-            object.label_cos_sim = float(similarity[label_idx])
 
     def create_graph(self):
         """
@@ -879,6 +904,10 @@ class Graph:
                 print(" number of objects before merging: ", len(room.objects))
                 room.merge_objects()
                 print(" number of objects after merging: ", len(room.objects))
+
+            # Room merging replaces each room's object list. Keep the graph-level
+            # view aligned so the final uncertainty pass sees only final objects.
+            self.objects = [object for room in self.rooms for object in room.objects]
 
         self.recompute_semantic_uncertainty()
 

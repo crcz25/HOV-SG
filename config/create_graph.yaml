@@ -41,5 +41,5 @@ pipeline:
   merge_type: sequential # hierarchical, sequential
   save_intermediate_results: false
   obj_labels: HM3DSEM_LABELS
-  semantic_uncertainty_temperature: 100.0
+  semantic_uncertainty_logit_scale: 100.0
   merge_objects_graph: false
