@@ -25,6 +25,16 @@ def test_two_objects_follow_noisy_or():
     assert result[0] == pytest.approx(0.7)
 
 
+def test_detection_reliability_scales_object_contribution():
+    result = compute_room_containment_probs(
+        np.array([[0.8]]),
+        detection_reliabilities=[0.25],
+        prior=0.0,
+    )
+
+    assert result[0] == pytest.approx(0.2)
+
+
 def test_more_support_is_monotonic():
     one_object = compute_room_containment_probs(np.array([[0.5, 0.1]]))
     two_objects = compute_room_containment_probs(
@@ -32,3 +42,14 @@ def test_more_support_is_monotonic():
     )
 
     assert np.all(two_objects >= one_object)
+
+
+def test_lower_reliability_cannot_increase_belief():
+    high_reliability = compute_room_containment_probs(
+        np.array([[0.8, 0.2]]), detection_reliabilities=[1.0]
+    )
+    low_reliability = compute_room_containment_probs(
+        np.array([[0.8, 0.2]]), detection_reliabilities=[0.25]
+    )
+
+    assert np.all(low_reliability <= high_reliability)

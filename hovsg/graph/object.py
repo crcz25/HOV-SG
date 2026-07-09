@@ -7,6 +7,8 @@ import os
 import numpy as np
 import open3d as o3d
 
+from hovsg.utils.detection_uncertainty import uncertainty_from_confidence
+
 
 
 class Object:
@@ -27,6 +29,8 @@ class Object:
         self.label_idx = None
         self.label_cos_sim = None
         self.semantic_uncertainty = None
+        self.c_det = None
+        self.u_det = None
 
     def set_vertices(self, vertices):
         """
@@ -58,6 +62,8 @@ class Object:
                 if self.semantic_uncertainty is not None
                 else None
             ),
+            "c_det": float(self.c_det) if self.c_det is not None else None,
+            "u_det": float(self.u_det) if self.u_det is not None else None,
         }
         with open(os.path.join(path, str(self.object_id) + ".json"), "w") as outfile:
             json.dump(metadata, outfile)
@@ -79,6 +85,8 @@ class Object:
             self.label_idx = metadata.get("label_idx")
             self.label_cos_sim = metadata.get("label_cos_sim")
             self.semantic_uncertainty = metadata.get("semantic_uncertainty")
+            self.c_det = metadata.get("c_det")
+            self.u_det = metadata.get("u_det")
 
     def __add__(self, other):
         """
@@ -95,6 +103,17 @@ class Object:
         embedding_norm = np.linalg.norm(self.embedding)
         if embedding_norm > 1e-8:
             self.embedding = self.embedding / embedding_norm
+        c_det_values = [
+            float(c_det)
+            for c_det in (self.c_det, getattr(other, "c_det", None))
+            if c_det is not None
+        ]
+        if c_det_values:
+            self.c_det = float(np.clip(np.mean(c_det_values), 0.0, 1.0))
+            self.u_det = uncertainty_from_confidence(self.c_det)
+        else:
+            self.c_det = None
+            self.u_det = None
         self.label_cos_sim = None
         self.semantic_uncertainty = None
         return self

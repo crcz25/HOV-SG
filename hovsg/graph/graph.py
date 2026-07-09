@@ -59,6 +59,13 @@ from hovsg.utils.uncertainty import (
     compute_semantic_distribution,
     compute_semantic_uncertainty,
 )
+from hovsg.utils.detection_uncertainty import (
+    accumulate_confidence,
+    finalize_confidence_array,
+    mask_predicted_iou,
+    object_confidence_from_points,
+    uncertainty_from_confidence,
+)
 from hovsg.utils.constants import MATTERPORT_GT_LABELS, CLIP_DIM
 from hovsg.utils.llm_utils import (
     parse_floor_room_object_gpt35,
@@ -82,6 +89,7 @@ class Graph:
         self.mask_feats = []
         self.mask_feats_d = []
         self.mask_pcds = []
+        self.mask_confs = []
         self.mask_weights = []
         self.objects = []
         self.label_text_feats = None
@@ -175,6 +183,8 @@ class Graph:
         n_points = locs_in.shape[0]
         counter = torch.zeros((n_points, 1), device="cpu")
         sum_features = torch.zeros((n_points, self.clip_feat_dim), device="cpu")
+        counter_conf = np.zeros((n_points, 1), dtype=np.float64)
+        sum_conf = np.zeros((n_points, 1), dtype=np.float64)
 
         # extract features for each frame
         frames_pcd = []
@@ -205,6 +215,18 @@ class Graph:
             )
             frames_pcd.append(masks_3d)
             frames_feats.append(F_masks)
+            for mask_idx, sam_mask in enumerate(masks):
+                if mask_idx >= len(masks_3d) or masks_3d[mask_idx].is_empty():
+                    continue
+                _, conf_idx = tree_pcd.query(
+                    np.asarray(masks_3d[mask_idx].points), k=1, workers=-1
+                )
+                accumulate_confidence(
+                    sum_conf,
+                    counter_conf,
+                    conf_idx,
+                    mask_predicted_iou(sam_mask),
+                )
             # fuse features for each point in the full pcd
             mask = np.array(depth_image) > 0
             mask = torch.from_numpy(mask)
@@ -218,9 +240,11 @@ class Graph:
         sum_features = sum_features / counter
         self.full_feats_array = sum_features.cpu().numpy()
         self.full_feats_array: np.ndarray
+        self.full_conf_array = finalize_confidence_array(sum_conf, counter_conf)
+        self.full_conf_array: np.ndarray
         
         # free memory
-        del sum_features, counter
+        del sum_features, counter, sum_conf, counter_conf
         torch.cuda.empty_cache() 
 
         # merging the masks
@@ -248,10 +272,14 @@ class Graph:
                 self.mask_pcds.pop(i)
         # fuse point features in every 3d mask
         masks_feats = []
+        masks_confs = []
         for i, mask_3d in tqdm(enumerate(self.mask_pcds), desc="Fusing features"):
             # find the points in the mask
             mask_3d = mask_3d.voxel_down_sample(self.cfg.pipeline.voxel_size * 2)
             points = np.asarray(mask_3d.points)
+            masks_confs.append(
+                object_confidence_from_points(self.full_conf_array, tree_pcd, points)
+            )
             dist, idx = tree_pcd.query(points, k=1, workers=-1)
             feats = self.full_feats_array[idx]
             feats = np.nan_to_num(feats)
@@ -264,9 +292,10 @@ class Graph:
             feats = feats_denoise_dbscan(feats, eps=0.01, min_points=100)
             masks_feats.append(feats)
         self.mask_feats = masks_feats
+        self.mask_confs = masks_confs
         print("number of masks: ", len(self.mask_feats))
         print("number of pcds in hovsg: ", len(self.mask_pcds))
-        assert len(self.mask_pcds) == len(self.mask_feats)
+        assert len(self.mask_pcds) == len(self.mask_confs) == len(self.mask_feats)
 
     def segment_floors(self, path, flip_zy=False):
         """
@@ -706,6 +735,8 @@ class Graph:
                 embedding_norm = np.linalg.norm(object.embedding)
                 if embedding_norm >= 1e-8:
                     object.embedding = object.embedding / embedding_norm
+                object.c_det = float(self.mask_confs[mask_idx])
+                object.u_det = uncertainty_from_confidence(object.c_det)
                 name, label_idx, similarity = self.identify_object(
                     object.embedding, text_feats, classes
                 )
@@ -780,6 +811,15 @@ class Graph:
                 float(similarity[int(label_idx)]) if label_idx is not None else None
             )
 
+    def get_object_detection_reliability(self, object):
+        """Return existing detection reliability, or the neutral default.
+
+        Older saved graphs do not have detection confidence, so they use the
+        neutral reliability default.
+        """
+        c_det = getattr(object, "c_det", None)
+        return 1.0 if c_det is None else float(np.clip(c_det, 0.0, 1.0))
+
     def propagate_semantic_uncertainty_to_rooms(self):
         """Compute class-indexed containment beliefs for every room."""
         if self.label_text_feats is None or self.label_classes is None:
@@ -804,6 +844,7 @@ class Graph:
 
         for room in self.rooms:
             semantic_probs = []
+            detection_reliabilities = []
             for object in room.objects:
                 _, probabilities, _ = compute_semantic_distribution(
                     object.embedding,
@@ -811,6 +852,9 @@ class Graph:
                     logit_scale=logit_scale,
                 )
                 semantic_probs.append(probabilities)
+                detection_reliabilities.append(
+                    self.get_object_detection_reliability(object)
+                )
 
             if semantic_probs:
                 semantic_probs = np.asarray(semantic_probs, dtype=np.float64)
@@ -819,6 +863,7 @@ class Graph:
 
             room.class_containment_probs = compute_room_containment_probs(
                 semantic_probs,
+                detection_reliabilities=detection_reliabilities,
                 prior=epsilon,
             )
             top_indices = np.argsort(
