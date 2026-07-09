@@ -35,6 +35,8 @@ class Room:
         self.room_zero_level = None  # Zero level of the room
         self.represent_images = []  # 5 images that represent the appearance of the room
         self.object_counter = 0
+        self.class_containment_probs = None
+        self.class_containment_topk = None
 
     def add_object(self, objectt):
         """
@@ -230,6 +232,12 @@ class Room:
             "room_zero_level": self.room_zero_level,
             "embeddings": [i.tolist() for i in self.embeddings],
             "represent_images": self.represent_images,
+            "class_containment_probs": (
+                self.class_containment_probs.tolist()
+                if self.class_containment_probs is not None
+                else None
+            ),
+            "class_containment_topk": self.class_containment_topk,
         }
         with open(os.path.join(path, str(self.room_id) + ".json"), "w") as outfile:
             json.dump(metadata, outfile)
@@ -251,6 +259,13 @@ class Room:
             self.room_zero_level = metadata["room_zero_level"]
             self.embeddings = [np.asarray(i) for i in metadata["embeddings"]]
             self.represent_images = metadata["represent_images"]
+            class_containment_probs = metadata.get("class_containment_probs")
+            self.class_containment_probs = (
+                np.asarray(class_containment_probs, dtype=np.float64)
+                if class_containment_probs is not None
+                else None
+            )
+            self.class_containment_topk = metadata.get("class_containment_topk")
 
     def __str__(self):
         return f"Room ID: {self.room_id}, Name: {self.name}, Floor ID: {self.floor_id}, Objects: {len(self.objects)}"

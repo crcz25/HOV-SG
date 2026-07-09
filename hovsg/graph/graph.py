@@ -55,6 +55,8 @@ from hovsg.graph.navigation_graph import NavigationGraph
 from hovsg.utils.label_feats import get_label_feats
 from hovsg.utils.uncertainty import (
     compute_cosine_similarities,
+    compute_room_containment_probs,
+    compute_semantic_distribution,
     compute_semantic_uncertainty,
 )
 from hovsg.utils.constants import MATTERPORT_GT_LABELS, CLIP_DIM
@@ -778,6 +780,59 @@ class Graph:
                 float(similarity[int(label_idx)]) if label_idx is not None else None
             )
 
+    def propagate_semantic_uncertainty_to_rooms(self):
+        """Compute class-indexed containment beliefs for every room."""
+        if self.label_text_feats is None or self.label_classes is None:
+            text_feats, classes = get_label_feats(
+                self.clip_model,
+                self.clip_feat_dim,
+                self.cfg.pipeline.obj_labels,
+                self.cfg.main.save_path,
+            )
+            self.label_text_feats = text_feats
+            self.label_classes = classes
+
+        logit_scale = float(
+            self.cfg.pipeline.get("semantic_uncertainty_logit_scale", 100.0)
+        )
+        self.semantic_uncertainty_logit_scale = logit_scale
+        epsilon = float(
+            np.clip(self.cfg.pipeline.get("room_containment_prior", 0.0), 0.0, 1.0)
+        )
+        top_k = max(0, int(self.cfg.pipeline.get("room_containment_top_k", 20)))
+        num_classes = len(self.label_classes)
+
+        for room in self.rooms:
+            semantic_probs = []
+            for object in room.objects:
+                _, probabilities, _ = compute_semantic_distribution(
+                    object.embedding,
+                    self.label_text_feats,
+                    logit_scale=logit_scale,
+                )
+                semantic_probs.append(probabilities)
+
+            if semantic_probs:
+                semantic_probs = np.asarray(semantic_probs, dtype=np.float64)
+            else:
+                semantic_probs = np.empty((0, num_classes), dtype=np.float64)
+
+            room.class_containment_probs = compute_room_containment_probs(
+                semantic_probs,
+                prior=epsilon,
+            )
+            top_indices = np.argsort(
+                -room.class_containment_probs, kind="stable"
+            )[: min(top_k, num_classes)]
+            room.class_containment_topk = [
+                {
+                    "class_idx": int(class_idx),
+                    "class_name": str(self.label_classes[class_idx]),
+                    "prob": float(room.class_containment_probs[class_idx]),
+                }
+                for class_idx in top_indices
+            ]
+
     def create_graph(self):
         """
         Create the full HOV-SG graph as a networkx graph
@@ -910,6 +965,7 @@ class Graph:
             self.objects = [object for room in self.rooms for object in room.objects]
 
         self.recompute_semantic_uncertainty()
+        self.propagate_semantic_uncertainty_to_rooms()
 
         print("creating graph...")
         self.create_graph()

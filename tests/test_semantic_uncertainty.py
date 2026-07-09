@@ -1,7 +1,10 @@
 import numpy as np
 import pytest
 
-from hovsg.utils.uncertainty import compute_semantic_uncertainty
+from hovsg.utils.uncertainty import (
+    compute_semantic_distribution,
+    compute_semantic_uncertainty,
+)
 
 
 def test_strong_class_preference_has_low_uncertainty():
@@ -51,3 +54,14 @@ def test_text_features_are_normalized_defensively():
 
     np.testing.assert_allclose(similarity, [1.0, 0.0])
     assert label_cos_sim == pytest.approx(1.0)
+
+
+def test_zero_embedding_has_uniform_compatibility_distribution():
+    similarity, probabilities, uncertainty = compute_semantic_distribution(
+        np.zeros(3),
+        np.eye(3),
+    )
+
+    np.testing.assert_array_equal(similarity, np.zeros(3))
+    np.testing.assert_allclose(probabilities, np.full(3, 1.0 / 3.0))
+    assert uncertainty == 1.0
