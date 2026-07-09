@@ -7,6 +7,7 @@ __pycache__/
 /hovsg.egg-info
 /data/*
 !/data/.gitkeep
+/hovsg/data/**/outputs/
 /outputs
 /checkpoints/*
 !/checkpoints/.gitkeep
