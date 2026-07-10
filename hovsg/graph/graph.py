@@ -55,7 +55,6 @@ from hovsg.graph.navigation_graph import NavigationGraph
 from hovsg.utils.label_feats import get_label_feats
 from hovsg.utils.uncertainty import (
     compute_cosine_similarities,
-    compute_room_containment_probs,
     compute_semantic_distribution,
     compute_semantic_uncertainty,
 )
@@ -817,11 +816,20 @@ class Graph:
         Older saved graphs do not have detection confidence, so they use the
         neutral reliability default.
         """
-        c_det = getattr(object, "c_det", None)
-        return 1.0 if c_det is None else float(np.clip(c_det, 0.0, 1.0))
+        for attr_name in (
+            "c_det",
+            "det_confidence",
+            "detection_confidence",
+            "confidence",
+            "score",
+        ):
+            c_det = getattr(object, attr_name, None)
+            if c_det is not None:
+                return float(np.clip(c_det, 0.0, 1.0))
+        return 1.0
 
     def propagate_semantic_uncertainty_to_rooms(self):
-        """Compute class-indexed containment beliefs for every room."""
+        """Compute three room--class containment belief signals."""
         if self.label_text_feats is None or self.label_classes is None:
             text_feats, classes = get_label_feats(
                 self.clip_model,
@@ -836,47 +844,42 @@ class Graph:
             self.cfg.pipeline.get("semantic_uncertainty_logit_scale", 100.0)
         )
         self.semantic_uncertainty_logit_scale = logit_scale
-        epsilon = float(
-            np.clip(self.cfg.pipeline.get("room_containment_prior", 0.0), 0.0, 1.0)
-        )
-        top_k = max(0, int(self.cfg.pipeline.get("room_containment_top_k", 20)))
-        num_classes = len(self.label_classes)
-
         for room in self.rooms:
-            semantic_probs = []
-            detection_reliabilities = []
+            room.class_containment_probs = None
+            room.class_containment_topk = None
+            room.object_beliefs_semantic = {}
+            room.object_beliefs_detection = {}
+            room.object_beliefs_combined = {}
+
             for object in room.objects:
                 _, probabilities, _ = compute_semantic_distribution(
                     object.embedding,
                     self.label_text_feats,
                     logit_scale=logit_scale,
                 )
-                semantic_probs.append(probabilities)
-                detection_reliabilities.append(
-                    self.get_object_detection_reliability(object)
-                )
+                class_idx = int(np.argmax(probabilities))
+                p_top1 = float(np.clip(probabilities[class_idx], 0.0, 1.0))
+                c_det = self.get_object_detection_reliability(object)
+                obj_id = str(object.object_id)
+                class_name = str(self.label_classes[class_idx])
 
-            if semantic_probs:
-                semantic_probs = np.asarray(semantic_probs, dtype=np.float64)
-            else:
-                semantic_probs = np.empty((0, num_classes), dtype=np.float64)
-
-            room.class_containment_probs = compute_room_containment_probs(
-                semantic_probs,
-                detection_reliabilities=detection_reliabilities,
-                prior=epsilon,
-            )
-            top_indices = np.argsort(
-                -room.class_containment_probs, kind="stable"
-            )[: min(top_k, num_classes)]
-            room.class_containment_topk = [
-                {
-                    "class_idx": int(class_idx),
-                    "class_name": str(self.label_classes[class_idx]),
-                    "prob": float(room.class_containment_probs[class_idx]),
+                room.object_beliefs_semantic[obj_id] = {
+                    "class_idx": class_idx,
+                    "class_name": class_name,
+                    "q": p_top1,
                 }
-                for class_idx in top_indices
-            ]
+                room.object_beliefs_detection[obj_id] = {
+                    "class_idx": class_idx,
+                    "class_name": class_name,
+                    "q": c_det,
+                }
+                room.object_beliefs_combined[obj_id] = {
+                    "class_idx": class_idx,
+                    "class_name": class_name,
+                    "q": float(np.clip(c_det * p_top1, 0.0, 1.0)),
+                }
+
+            room.compute_class_containment_beliefs()
 
     def create_graph(self):
         """

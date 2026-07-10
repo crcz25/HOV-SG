@@ -37,6 +37,12 @@ class Room:
         self.object_counter = 0
         self.class_containment_probs = None
         self.class_containment_topk = None
+        self.object_beliefs_semantic = {}
+        self.object_beliefs_detection = {}
+        self.object_beliefs_combined = {}
+        self.class_containment_beliefs_semantic = None
+        self.class_containment_beliefs_detection = None
+        self.class_containment_beliefs_combined = None
 
     def add_object(self, objectt):
         """
@@ -214,6 +220,56 @@ class Room:
             self.name = default_room_types[col_id]
         print("room_id, name: ", self.room_id, self.name)
 
+    @staticmethod
+    def _fuse_class_containment(object_beliefs):
+        class_to_qs = defaultdict(list)
+        for entry in object_beliefs.values():
+            class_idx = int(entry["class_idx"])
+            q = float(np.clip(entry["q"], 0.0, 1.0))
+            class_to_qs[class_idx].append(q)
+
+        beliefs = {}
+        for class_idx, qs in class_to_qs.items():
+            not_contained = 1.0
+            for q in qs:
+                not_contained *= 1.0 - q
+            beliefs[class_idx] = float(np.clip(1.0 - not_contained, 0.0, 1.0))
+
+        return beliefs
+
+    def compute_class_containment_beliefs(self):
+        self.class_containment_beliefs_semantic = self._fuse_class_containment(
+            self.object_beliefs_semantic
+        )
+        self.class_containment_beliefs_detection = self._fuse_class_containment(
+            self.object_beliefs_detection
+        )
+        self.class_containment_beliefs_combined = self._fuse_class_containment(
+            self.object_beliefs_combined
+        )
+
+    def get_class_containment_belief(self, class_idx, signal="combined"):
+        signal_to_attr = {
+            "semantic": "class_containment_beliefs_semantic",
+            "detection": "class_containment_beliefs_detection",
+            "combined": "class_containment_beliefs_combined",
+        }
+        if signal not in signal_to_attr:
+            raise ValueError("signal must be one of: semantic, detection, combined")
+
+        attr_name = signal_to_attr[signal]
+        beliefs = getattr(self, attr_name)
+        if beliefs is None:
+            self.compute_class_containment_beliefs()
+            beliefs = getattr(self, attr_name)
+        return beliefs.get(int(class_idx))
+
+    @staticmethod
+    def _stringify_belief_keys(beliefs):
+        if beliefs is None:
+            return None
+        return {str(class_idx): float(prob) for class_idx, prob in beliefs.items()}
+
     def save(self, path):
         """
         Save the room in folder as ply for the point cloud
@@ -238,6 +294,18 @@ class Room:
                 else None
             ),
             "class_containment_topk": self.class_containment_topk,
+            "object_beliefs_semantic": self.object_beliefs_semantic,
+            "object_beliefs_detection": self.object_beliefs_detection,
+            "object_beliefs_combined": self.object_beliefs_combined,
+            "class_containment_beliefs_semantic": self._stringify_belief_keys(
+                self.class_containment_beliefs_semantic
+            ),
+            "class_containment_beliefs_detection": self._stringify_belief_keys(
+                self.class_containment_beliefs_detection
+            ),
+            "class_containment_beliefs_combined": self._stringify_belief_keys(
+                self.class_containment_beliefs_combined
+            ),
         }
         with open(os.path.join(path, str(self.room_id) + ".json"), "w") as outfile:
             json.dump(metadata, outfile)
@@ -266,6 +334,22 @@ class Room:
                 else None
             )
             self.class_containment_topk = metadata.get("class_containment_topk")
+            for signal in ("semantic", "detection", "combined"):
+                setattr(
+                    self,
+                    f"object_beliefs_{signal}",
+                    metadata.get(f"object_beliefs_{signal}", {}),
+                )
+                raw_beliefs = metadata.get(f"class_containment_beliefs_{signal}")
+                setattr(
+                    self,
+                    f"class_containment_beliefs_{signal}",
+                    (
+                        {int(k): float(v) for k, v in raw_beliefs.items()}
+                        if raw_beliefs is not None
+                        else None
+                    ),
+                )
 
     def __str__(self):
         return f"Room ID: {self.room_id}, Name: {self.name}, Floor ID: {self.floor_id}, Objects: {len(self.objects)}"
