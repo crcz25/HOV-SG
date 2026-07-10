@@ -11,7 +11,7 @@ from typing import Dict, List, Tuple, Union, Any
 
 import cv2
 import matplotlib
-matplotlib.use("TkAgg" if os.environ.get("DISPLAY") else "Agg")
+matplotlib.use(os.environ.get("MPLBACKEND", "TkAgg" if os.environ.get("DISPLAY") else "Agg"))
 import networkx as nx
 from networkx.readwrite import json_graph
 import numpy as np

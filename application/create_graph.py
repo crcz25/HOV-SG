@@ -1,4 +1,13 @@
 import os
+
+# Graph creation only writes plots to disk and may run on a headless machine.
+# Set the environment override too, so later imports cannot select a GUI backend.
+os.environ["MPLBACKEND"] = "Agg"
+
+import matplotlib
+
+matplotlib.use("Agg")
+
 import hydra
 from omegaconf import DictConfig
 from hovsg.graph.graph import Graph
