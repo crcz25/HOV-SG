@@ -60,17 +60,13 @@ def test_semantic_metadata_round_trip(tmp_path, stub_open3d_io, values):
         expected = int(value) if field.endswith("idx") and value is not None else value
         expected = float(expected) if expected is not None and not field.endswith("idx") else expected
         assert getattr(restored, field) == expected
-    assert restored.semantic_uncertainty == restored.u_sem
-
-
-def test_old_metadata_loads_without_margin_fields(tmp_path, stub_open3d_io):
+def test_metadata_without_optional_uncertainty_fields_loads(tmp_path, stub_open3d_io):
     metadata = {
         "object_id": "0_0_0",
         "vertices": [],
         "room_id": "0_0",
         "name": "chair",
         "embedding": [1.0, 0.0],
-        "semantic_uncertainty": 0.25,
     }
     (tmp_path / "0_0_0.json").write_text(json.dumps(metadata), encoding="utf-8")
 
@@ -79,16 +75,7 @@ def test_old_metadata_loads_without_margin_fields(tmp_path, stub_open3d_io):
 
     for field in SEMANTIC_FIELDS:
         assert getattr(restored, field) is None
-    assert restored.semantic_uncertainty is None
-
-
-def test_semantic_uncertainty_alias_is_read_only():
-    obj = Object("0_0_0", "0_0")
-    obj.u_sem = 0.2
-
-    assert obj.semantic_uncertainty == 0.2
-    with pytest.raises(AttributeError):
-        obj.semantic_uncertainty = 0.3
+    assert not hasattr(restored, "semantic_uncertainty")
 
 
 def test_merge_normalizes_embedding_and_invalidates_margin_fields():

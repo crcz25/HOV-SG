@@ -56,7 +56,6 @@ from hovsg.utils.label_feats import get_label_feats
 from hovsg.utils.uncertainty import (
     build_synonym_eligibility_mask,
     compute_cosine_similarities,
-    compute_semantic_distribution,
     compute_semantic_margin_uncertainty,
 )
 from hovsg.utils.detection_uncertainty import (
@@ -646,10 +645,10 @@ class Graph:
         self.label_text_feats = text_feats
         self.label_classes = classes
         self.semantic_uncertainty_logit_scale = float(
-            self.cfg.pipeline.get("semantic_uncertainty_logit_scale", 100.0)
+            self.cfg.pipeline.semantic_uncertainty_logit_scale
         )
         self.semantic_uncertainty_synonym_threshold = float(
-            self.cfg.pipeline.get("semantic_uncertainty_synonym_threshold", 0.75)
+            self.cfg.pipeline.semantic_uncertainty_synonym_threshold
         )
         self.label_synonym_mask = build_synonym_eligibility_mask(
             text_feats, self.semantic_uncertainty_synonym_threshold
@@ -784,8 +783,8 @@ class Graph:
 
         logit_scale = self.semantic_uncertainty_logit_scale
         if logit_scale is None:
-            logit_scale = float(
-                self.cfg.pipeline.get("semantic_uncertainty_logit_scale", 100.0)
+            raise RuntimeError(
+                "Semantic logit scale must be configured before recomputation"
             )
 
         semantic_fields = (
@@ -812,27 +811,9 @@ class Graph:
             for field, value in semantic_values.items():
                 setattr(object, field, value)
 
-    def get_object_detection_reliability(self, object):
-        """Return existing detection reliability, or the neutral default.
-
-        Older saved graphs do not have detection confidence, so they use the
-        neutral reliability default.
-        """
-        for attr_name in (
-            "c_det",
-            "det_confidence",
-            "detection_confidence",
-            "confidence",
-            "score",
-        ):
-            c_det = getattr(object, attr_name, None)
-            if c_det is not None:
-                return float(np.clip(c_det, 0.0, 1.0))
-        return 1.0
-
     def propagate_semantic_uncertainty_to_rooms(self):
-        """Compute three room--class containment belief signals."""
-        if self.label_text_feats is None or self.label_classes is None:
+        """Compute semantic, detection, and combined room beliefs."""
+        if self.label_classes is None:
             text_feats, classes = get_label_feats(
                 self.clip_model,
                 self.clip_feat_dim,
@@ -842,10 +823,6 @@ class Graph:
             self.label_text_feats = text_feats
             self.label_classes = classes
 
-        logit_scale = float(
-            self.cfg.pipeline.get("semantic_uncertainty_logit_scale", 100.0)
-        )
-        self.semantic_uncertainty_logit_scale = logit_scale
         for room in self.rooms:
             room.class_containment_probs = None
             room.class_containment_topk = None
@@ -854,21 +831,21 @@ class Graph:
             room.object_beliefs_combined = {}
 
             for object in room.objects:
-                _, probabilities, _ = compute_semantic_distribution(
-                    object.embedding,
-                    self.label_text_feats,
-                    logit_scale=logit_scale,
-                )
-                class_idx = int(np.argmax(probabilities))
-                p_top1 = float(np.clip(probabilities[class_idx], 0.0, 1.0))
-                c_det = self.get_object_detection_reliability(object)
+                if object.label_idx is None or object.c_sem is None or object.c_det is None:
+                    raise RuntimeError(
+                        "Objects must have label_idx, c_sem, and c_det before "
+                        "room belief propagation"
+                    )
+                class_idx = int(object.label_idx)
+                c_sem = float(np.clip(object.c_sem, 0.0, 1.0))
+                c_det = float(np.clip(object.c_det, 0.0, 1.0))
                 obj_id = str(object.object_id)
                 class_name = str(self.label_classes[class_idx])
 
                 room.object_beliefs_semantic[obj_id] = {
                     "class_idx": class_idx,
                     "class_name": class_name,
-                    "q": p_top1,
+                    "q": c_sem,
                 }
                 room.object_beliefs_detection[obj_id] = {
                     "class_idx": class_idx,
@@ -878,7 +855,7 @@ class Graph:
                 room.object_beliefs_combined[obj_id] = {
                     "class_idx": class_idx,
                     "class_name": class_name,
-                    "q": float(np.clip(c_det * p_top1, 0.0, 1.0)),
+                    "q": float(np.clip(c_det * c_sem, 0.0, 1.0)),
                 }
 
             room.compute_class_containment_beliefs()

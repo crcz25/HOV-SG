@@ -36,11 +36,6 @@ class Object:
         self.c_det = None
         self.u_det = None
 
-    @property
-    def semantic_uncertainty(self):
-        """Backward-compatible read-only alias for semantic uncertainty."""
-        return self.u_sem
-
     def set_vertices(self, vertices):
         """
         Method to set the vertices of the object

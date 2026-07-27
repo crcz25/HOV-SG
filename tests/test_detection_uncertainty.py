@@ -166,10 +166,11 @@ def test_segment_objects_assigns_detection_confidence(monkeypatch, tmp_path):
     cfg = SimpleNamespace(
         main=SimpleNamespace(save_path=str(tmp_path)),
         pipeline=Pipeline(
-            save_intermediate_results=False,
-            obj_labels="synthetic",
-            semantic_uncertainty_logit_scale=10.0,
-        ),
+                save_intermediate_results=False,
+                obj_labels="synthetic",
+                semantic_uncertainty_logit_scale=10.0,
+                semantic_uncertainty_synonym_threshold=0.75,
+            ),
     )
 
     monkeypatch.setattr(graph_module, "pcd_denoise_dbscan", lambda pcd, **_: pcd)

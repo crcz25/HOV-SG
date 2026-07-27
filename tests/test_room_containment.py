@@ -1,15 +1,10 @@
 import numpy as np
 import pytest
-from types import MethodType, SimpleNamespace
+from types import SimpleNamespace
 
 from hovsg.graph.graph import Graph
 from hovsg.graph.room import Room
 from hovsg.utils.uncertainty import compute_room_containment_probs
-
-
-class Pipeline(dict):
-    def __getattr__(self, key):
-        return self[key]
 
 
 def test_empty_room_equals_prior():
@@ -138,22 +133,17 @@ def test_different_assigned_classes_do_not_cross_contribute():
 
 def test_room_propagation_shares_assignment_but_keeps_signal_values_separate():
     room = Room("0_0", "0")
-    first = SimpleNamespace(object_id="0_0_0", embedding=np.array([1.0, 0.0]), c_det=0.6)
-    second = SimpleNamespace(object_id="0_0_1", embedding=np.array([0.0, 1.0]), c_det=0.25)
+    first = SimpleNamespace(
+        object_id="0_0_0", label_idx=0, c_sem=0.8, c_det=0.6
+    )
+    second = SimpleNamespace(
+        object_id="0_0_1", label_idx=1, c_sem=0.7, c_det=0.25
+    )
     room.objects = [first, second]
     graph = SimpleNamespace(
-        cfg=SimpleNamespace(
-            pipeline=Pipeline(
-                semantic_uncertainty_logit_scale=1.0,
-            )
-        ),
         rooms=[room],
         label_text_feats=np.eye(2, dtype=np.float64),
         label_classes=["chair", "table"],
-        semantic_uncertainty_logit_scale=None,
-    )
-    graph.get_object_detection_reliability = MethodType(
-        Graph.get_object_detection_reliability, graph
     )
 
     Graph.propagate_semantic_uncertainty_to_rooms(graph)
