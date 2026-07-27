@@ -6,6 +6,17 @@ import pytest
 from hovsg.graph.object import Object
 
 
+SEMANTIC_FIELDS = (
+    "label_idx",
+    "label_cos_sim",
+    "runner_up_idx",
+    "runner_up_cos_sim",
+    "semantic_margin",
+    "c_sem",
+    "u_sem",
+)
+
+
 @pytest.fixture
 def stub_open3d_io(monkeypatch):
     monkeypatch.setattr("hovsg.graph.object.o3d.io.write_point_cloud", lambda *_: True)
@@ -15,57 +26,72 @@ def stub_open3d_io(monkeypatch):
 
 
 @pytest.mark.parametrize(
-    ("label_idx", "label_cos_sim", "semantic_uncertainty"),
-    [(None, None, None), (np.int64(2), np.float32(0.75), np.float64(0.25))],
+    "values",
+    [
+        (None, None, None, None, None, None, None),
+        (
+            np.int64(2),
+            np.float32(0.75),
+            np.int32(5),
+            np.float64(0.5),
+            np.float32(0.25),
+            np.float64(0.9),
+            np.float32(0.1),
+        ),
+    ],
 )
-def test_semantic_metadata_round_trip(
-    tmp_path,
-    stub_open3d_io,
-    label_idx,
-    label_cos_sim,
-    semantic_uncertainty,
-):
+def test_semantic_metadata_round_trip(tmp_path, stub_open3d_io, values):
     source = Object("0_0_0", "0_0", name="chair")
     source.pcd = object()
     source.vertices = np.zeros((2, 3))
     source.embedding = np.array([1.0, 0.0])
-    source.label_idx = label_idx
-    source.label_cos_sim = label_cos_sim
-    source.semantic_uncertainty = semantic_uncertainty
+    for field, value in zip(SEMANTIC_FIELDS, values):
+        setattr(source, field, value)
     source.save(tmp_path)
+
+    saved = json.loads((tmp_path / "0_0_0.json").read_text(encoding="utf-8"))
+    assert "semantic_uncertainty" not in saved
+    assert all(field in saved for field in SEMANTIC_FIELDS)
 
     restored = Object("0_0_0", "0_0")
     restored.load(str(tmp_path))
 
-    expected_idx = int(label_idx) if label_idx is not None else None
-    assert restored.label_idx == expected_idx
-    assert restored.label_cos_sim == (
-        float(label_cos_sim) if label_cos_sim is not None else None
-    )
-    assert restored.semantic_uncertainty == (
-        float(semantic_uncertainty) if semantic_uncertainty is not None else None
-    )
+    for field, value in zip(SEMANTIC_FIELDS, values):
+        expected = int(value) if field.endswith("idx") and value is not None else value
+        expected = float(expected) if expected is not None and not field.endswith("idx") else expected
+        assert getattr(restored, field) == expected
+    assert restored.semantic_uncertainty == restored.u_sem
 
 
-def test_old_metadata_loads_without_semantic_fields(tmp_path, stub_open3d_io):
+def test_old_metadata_loads_without_margin_fields(tmp_path, stub_open3d_io):
     metadata = {
         "object_id": "0_0_0",
         "vertices": [],
         "room_id": "0_0",
         "name": "chair",
         "embedding": [1.0, 0.0],
+        "semantic_uncertainty": 0.25,
     }
     (tmp_path / "0_0_0.json").write_text(json.dumps(metadata), encoding="utf-8")
 
     restored = Object("0_0_0", "0_0")
     restored.load(str(tmp_path))
 
-    assert restored.label_idx is None
-    assert restored.label_cos_sim is None
+    for field in SEMANTIC_FIELDS:
+        assert getattr(restored, field) is None
     assert restored.semantic_uncertainty is None
 
 
-def test_merge_normalizes_embedding_and_invalidates_semantic_cues():
+def test_semantic_uncertainty_alias_is_read_only():
+    obj = Object("0_0_0", "0_0")
+    obj.u_sem = 0.2
+
+    assert obj.semantic_uncertainty == 0.2
+    with pytest.raises(AttributeError):
+        obj.semantic_uncertainty = 0.3
+
+
+def test_merge_normalizes_embedding_and_invalidates_margin_fields():
     class FakeBoundingBox:
         def get_box_points(self):
             return np.zeros((8, 3))
@@ -84,8 +110,8 @@ def test_merge_normalizes_embedding_and_invalidates_semantic_cues():
     left.pcd = FakePointCloud()
     left.embedding = np.array([1.0, 0.0])
     left.label_idx = 3
-    left.label_cos_sim = 0.8
-    left.semantic_uncertainty = 0.2
+    for field in SEMANTIC_FIELDS[1:]:
+        setattr(left, field, 0.5)
 
     right = Object("0_0_1", "0_0", name="chair")
     right.pcd = FakePointCloud()
@@ -95,5 +121,5 @@ def test_merge_normalizes_embedding_and_invalidates_semantic_cues():
 
     assert np.linalg.norm(merged.embedding) == pytest.approx(1.0)
     assert merged.label_idx == 3
-    assert merged.label_cos_sim is None
-    assert merged.semantic_uncertainty is None
+    for field in SEMANTIC_FIELDS[1:]:
+        assert getattr(merged, field) is None

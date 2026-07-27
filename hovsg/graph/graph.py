@@ -54,9 +54,10 @@ from hovsg.utils.graph_utils import (
 from hovsg.graph.navigation_graph import NavigationGraph
 from hovsg.utils.label_feats import get_label_feats
 from hovsg.utils.uncertainty import (
+    build_synonym_eligibility_mask,
     compute_cosine_similarities,
     compute_semantic_distribution,
-    compute_semantic_uncertainty,
+    compute_semantic_margin_uncertainty,
 )
 from hovsg.utils.detection_uncertainty import (
     accumulate_confidence,
@@ -93,7 +94,9 @@ class Graph:
         self.objects = []
         self.label_text_feats = None
         self.label_classes = None
+        self.label_synonym_mask = None
         self.semantic_uncertainty_logit_scale = None
+        self.semantic_uncertainty_synonym_threshold = None
         self.rooms = []
         self.floors = []
         self.full_feats_array = []
@@ -645,6 +648,12 @@ class Graph:
         self.semantic_uncertainty_logit_scale = float(
             self.cfg.pipeline.get("semantic_uncertainty_logit_scale", 100.0)
         )
+        self.semantic_uncertainty_synonym_threshold = float(
+            self.cfg.pipeline.get("semantic_uncertainty_synonym_threshold", 0.75)
+        )
+        self.label_synonym_mask = build_synonym_eligibility_mask(
+            text_feats, self.semantic_uncertainty_synonym_threshold
+        )
 
         pbar = tqdm(enumerate(self.floors), total=len(self.floors), desc="Floor: ")
         margin = 0.2
@@ -741,17 +750,16 @@ class Graph:
                 )
                 object.name = name
                 object.label_idx = label_idx
-                (
-                    similarity,
-                    object.semantic_uncertainty,
-                    object.label_cos_sim,
-                ) = compute_semantic_uncertainty(
+                semantic_values = compute_semantic_margin_uncertainty(
                     object.embedding,
                     text_feats,
                     label_idx=label_idx,
+                    eligibility_mask=self.label_synonym_mask,
                     logit_scale=self.semantic_uncertainty_logit_scale,
                     similarity=similarity,
                 )
+                for field, value in semantic_values.items():
+                    setattr(object, field, value)
                 # if [i for i in ["wall", "floor", "ceiling", "window", "door", "roof", "railing"] if i in name]:
                 #     continue
                 obj_pbar.set_description(
@@ -763,10 +771,15 @@ class Graph:
                 self.objects.append(object)
 
     def recompute_semantic_uncertainty(self):
-        """Refresh object uncertainty after object embeddings have been merged."""
-        if self.label_text_feats is None or self.label_classes is None:
+        """Refresh object margin uncertainty after embeddings have been merged."""
+        if (
+            self.label_text_feats is None
+            or self.label_classes is None
+            or self.label_synonym_mask is None
+        ):
             raise RuntimeError(
-                "Object label features must be loaded before recomputing uncertainty"
+                "Object label features and synonym mask must be loaded before "
+                "recomputing uncertainty"
             )
 
         logit_scale = self.semantic_uncertainty_logit_scale
@@ -775,40 +788,29 @@ class Graph:
                 self.cfg.pipeline.get("semantic_uncertainty_logit_scale", 100.0)
             )
 
+        semantic_fields = (
+            "label_cos_sim",
+            "runner_up_idx",
+            "runner_up_cos_sim",
+            "semantic_margin",
+            "c_sem",
+            "u_sem",
+        )
         for object in self.objects:
-            label_idx = getattr(object, "label_idx", None)
-            similarity, object.semantic_uncertainty = compute_semantic_uncertainty(
+            if getattr(object, "label_idx", None) is None:
+                for field in semantic_fields:
+                    setattr(object, field, None)
+                continue
+
+            semantic_values = compute_semantic_margin_uncertainty(
                 object.embedding,
                 self.label_text_feats,
+                label_idx=object.label_idx,
+                eligibility_mask=self.label_synonym_mask,
                 logit_scale=logit_scale,
             )
-
-            if label_idx is not None and not (
-                0 <= int(label_idx) < len(self.label_classes)
-            ):
-                label_idx = None
-                object.label_idx = None
-
-            if label_idx is None:
-                matching_indices = [
-                    idx
-                    for idx, class_name in enumerate(self.label_classes)
-                    if class_name == object.name
-                ]
-                if len(matching_indices) == 1:
-                    label_idx = matching_indices[0]
-                elif matching_indices and np.allclose(
-                    similarity[matching_indices], similarity[matching_indices[0]]
-                ):
-                    # Duplicate aliases are safe only when their text rows agree.
-                    label_idx = matching_indices[0]
-
-                if label_idx is not None:
-                    object.label_idx = int(label_idx)
-
-            object.label_cos_sim = (
-                float(similarity[int(label_idx)]) if label_idx is not None else None
-            )
+            for field, value in semantic_values.items():
+                setattr(object, field, value)
 
     def get_object_detection_reliability(self, object):
         """Return existing detection reliability, or the neutral default.
@@ -1013,7 +1015,6 @@ class Graph:
             self.objects = [object for room in self.rooms for object in room.objects]
 
         self.recompute_semantic_uncertainty()
-        self.propagate_semantic_uncertainty_to_rooms()
 
         print("creating graph...")
         self.create_graph()

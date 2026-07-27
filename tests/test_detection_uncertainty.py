@@ -211,3 +211,13 @@ def test_segment_objects_assigns_detection_confidence(monkeypatch, tmp_path):
     assert [object.c_det for object in graph.objects] == [0.25, 0.9]
     for object in graph.objects:
         assert object.u_det == pytest.approx(1.0 - object.c_det)
+        assert object.label_cos_sim == pytest.approx(1.0)
+        assert object.runner_up_cos_sim == pytest.approx(0.0)
+        assert object.semantic_margin == pytest.approx(1.0)
+        assert object.c_sem > 0.999
+        assert object.u_sem < 0.001
+
+    assert graph.semantic_uncertainty_synonym_threshold == pytest.approx(0.75)
+    np.testing.assert_array_equal(
+        graph.label_synonym_mask, np.array([[False, True], [True, False]])
+    )

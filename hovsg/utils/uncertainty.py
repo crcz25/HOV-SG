@@ -1,6 +1,9 @@
-"""Side-effect-free utilities for hierarchical semantic uncertainty."""
+"""Side-effect-free utilities for semantic and containment uncertainty."""
+
+import logging
 
 import numpy as np
+from scipy.special import expit
 
 
 _NORM_EPSILON = 1e-8
@@ -36,42 +39,109 @@ def compute_cosine_similarities(embedding, text_feats):
     return normalized_text_feats @ (embedding / embedding_norm)
 
 
-def compute_semantic_uncertainty(
+def build_synonym_eligibility_mask(text_feats, tau):
+    """Build the per-label mask of semantically distinct competitors.
+
+    ``mask[i, j]`` is true exactly when the cosine similarity between text
+    rows ``i`` and ``j`` is below ``tau``. Text rows are normalized
+    defensively and the diagonal is always excluded.
+    """
+    text_feats = np.asarray(text_feats, dtype=np.float64)
+    if text_feats.ndim != 2 or text_feats.shape[0] == 0:
+        raise ValueError("text_feats must be a non-empty two-dimensional array")
+
+    tau = float(tau)
+    if not 0.0 < tau < 1.0:
+        raise ValueError("tau must be strictly between 0 and 1")
+
+    text_norms = np.linalg.norm(text_feats, axis=1, keepdims=True)
+    normalized_text_feats = np.divide(
+        text_feats,
+        text_norms,
+        out=np.zeros_like(text_feats),
+        where=text_norms >= _NORM_EPSILON,
+    )
+    text_similarities = normalized_text_feats @ normalized_text_feats.T
+    eligibility_mask = text_similarities < tau
+    np.fill_diagonal(eligibility_mask, False)
+    return eligibility_mask
+
+
+def compute_semantic_margin_uncertainty(
     embedding,
     text_feats,
-    label_idx=None,
+    label_idx,
+    eligibility_mask,
     logit_scale=100.0,
     similarity=None,
 ):
-    """Compute vocabulary compatibility and normalized softmax entropy.
+    """Compute distinct-competitor margin confidence for one object.
 
-    Args:
-        embedding: One visual object embedding.
-        text_feats: Text embeddings aligned row-by-row with the vocabulary.
-        label_idx: Optional index of the already-assigned object label.
-        logit_scale: Inverse temperature applied to cosine similarities.
-        similarity: Optional cosine similarities already used for label selection.
-
-    Returns:
-        ``(similarity, semantic_uncertainty)`` when ``label_idx`` is omitted,
-        otherwise ``(similarity, semantic_uncertainty, label_cos_sim)``.
-
-    The softmax is a relative compatibility distribution over the supplied
-    vocabulary; it is not a calibrated posterior probability.
+    The optional ``similarity`` vector lets callers reuse the cosine
+    similarities that assigned the label. The embedding is still normalized
+    and checked internally so the zero-norm override remains authoritative.
     """
-    similarities, _, semantic_uncertainty = compute_semantic_distribution(
-        embedding,
-        text_feats,
-        logit_scale=logit_scale,
-        similarity=similarity,
-    )
-    num_classes = similarities.shape[0]
+    embedding = np.asarray(embedding, dtype=np.float64).reshape(-1)
+    text_feats = np.asarray(text_feats, dtype=np.float64)
+    if text_feats.ndim != 2 or text_feats.shape[0] == 0:
+        raise ValueError("text_feats must be a non-empty two-dimensional array")
+    if embedding.shape[0] != text_feats.shape[1]:
+        raise ValueError("embedding and text_feats must have the same feature dimension")
 
-    if label_idx is None:
-        return similarities, semantic_uncertainty
-
+    num_classes = text_feats.shape[0]
     label_idx = _validate_label_idx(label_idx, num_classes)
-    return similarities, semantic_uncertainty, float(similarities[label_idx])
+    eligibility_mask = np.asarray(eligibility_mask, dtype=bool)
+    if eligibility_mask.shape != (num_classes, num_classes):
+        raise ValueError("eligibility_mask must have shape (num_classes, num_classes)")
+
+    embedding_norm = np.linalg.norm(embedding)
+    if embedding_norm < _NORM_EPSILON:
+        return {
+            "label_cos_sim": 0.0,
+            "runner_up_idx": None,
+            "runner_up_cos_sim": 0.0,
+            "semantic_margin": 0.0,
+            "c_sem": 0.0,
+            "u_sem": 1.0,
+        }
+    normalized_embedding = embedding / embedding_norm
+
+    if similarity is None:
+        similarities = compute_cosine_similarities(normalized_embedding, text_feats)
+    else:
+        similarities = np.asarray(similarity, dtype=np.float64).reshape(-1)
+        if similarities.shape != (num_classes,):
+            raise ValueError("similarity must have one value per text feature")
+
+    label_cos_sim = float(similarities[label_idx])
+    candidates = np.flatnonzero(eligibility_mask[label_idx])
+    if candidates.size == 0:
+        logging.getLogger(__name__).warning(
+            "No eligible distinct semantic competitor for label_idx=%d; "
+            "using the empty-eligible-set fallback c_sem=1.0, u_sem=0.0",
+            label_idx,
+        )
+        return {
+            "label_cos_sim": label_cos_sim,
+            "runner_up_idx": None,
+            "runner_up_cos_sim": None,
+            "semantic_margin": None,
+            "c_sem": 1.0,
+            "u_sem": 0.0,
+        }
+
+    runner_up_idx = int(candidates[np.argmax(similarities[candidates])])
+    runner_up_cos_sim = float(similarities[runner_up_idx])
+    semantic_margin = float(label_cos_sim - runner_up_cos_sim)
+    c_sem = float(expit(float(logit_scale) * semantic_margin))
+    return {
+        "label_cos_sim": label_cos_sim,
+        "runner_up_idx": runner_up_idx,
+        "runner_up_cos_sim": runner_up_cos_sim,
+        "semantic_margin": semantic_margin,
+        "c_sem": c_sem,
+        "u_sem": float(1.0 - c_sem),
+    }
 
 
 def compute_semantic_distribution(

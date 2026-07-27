@@ -42,4 +42,6 @@ pipeline:
   save_intermediate_results: false
   obj_labels: HM3DSEM_LABELS
   semantic_uncertainty_logit_scale: 100.0
+  # Calibrated against cached HM3D text embeddings; excludes the named synonym pairs.
+  semantic_uncertainty_synonym_threshold: 0.75
   merge_objects_graph: false

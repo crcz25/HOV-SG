@@ -28,9 +28,18 @@ class Object:
         self.gt_name = None
         self.label_idx = None
         self.label_cos_sim = None
-        self.semantic_uncertainty = None
+        self.runner_up_idx = None
+        self.runner_up_cos_sim = None
+        self.semantic_margin = None
+        self.c_sem = None
+        self.u_sem = None
         self.c_det = None
         self.u_det = None
+
+    @property
+    def semantic_uncertainty(self):
+        """Backward-compatible read-only alias for semantic uncertainty."""
+        return self.u_sem
 
     def set_vertices(self, vertices):
         """
@@ -57,11 +66,21 @@ class Object:
             "label_cos_sim": (
                 float(self.label_cos_sim) if self.label_cos_sim is not None else None
             ),
-            "semantic_uncertainty": (
-                float(self.semantic_uncertainty)
-                if self.semantic_uncertainty is not None
+            "runner_up_idx": (
+                int(self.runner_up_idx) if self.runner_up_idx is not None else None
+            ),
+            "runner_up_cos_sim": (
+                float(self.runner_up_cos_sim)
+                if self.runner_up_cos_sim is not None
                 else None
             ),
+            "semantic_margin": (
+                float(self.semantic_margin)
+                if self.semantic_margin is not None
+                else None
+            ),
+            "c_sem": float(self.c_sem) if self.c_sem is not None else None,
+            "u_sem": float(self.u_sem) if self.u_sem is not None else None,
             "c_det": float(self.c_det) if self.c_det is not None else None,
             "u_det": float(self.u_det) if self.u_det is not None else None,
         }
@@ -84,7 +103,11 @@ class Object:
             self.embedding = np.asarray(metadata["embedding"]) if metadata["embedding"] != "" else None
             self.label_idx = metadata.get("label_idx")
             self.label_cos_sim = metadata.get("label_cos_sim")
-            self.semantic_uncertainty = metadata.get("semantic_uncertainty")
+            self.runner_up_idx = metadata.get("runner_up_idx")
+            self.runner_up_cos_sim = metadata.get("runner_up_cos_sim")
+            self.semantic_margin = metadata.get("semantic_margin")
+            self.c_sem = metadata.get("c_sem")
+            self.u_sem = metadata.get("u_sem")
             self.c_det = metadata.get("c_det")
             self.u_det = metadata.get("u_det")
 
@@ -115,7 +138,11 @@ class Object:
             self.c_det = None
             self.u_det = None
         self.label_cos_sim = None
-        self.semantic_uncertainty = None
+        self.runner_up_idx = None
+        self.runner_up_cos_sim = None
+        self.semantic_margin = None
+        self.c_sem = None
+        self.u_sem = None
         return self
 
     def __str__(self) -> str:
