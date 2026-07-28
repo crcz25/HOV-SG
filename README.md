@@ -63,6 +63,18 @@ docker compose -f .devcontainer/docker-compose.yml build
 docker compose -f .devcontainer/docker-compose.yml up -d
 ```
 
+After rebuilding, verify that the Open English WordNet 2025+ lexicon is
+available inside the image:
+```bash
+docker compose -f .devcontainer/docker-compose.yml run --rm hovsg-dev \
+  python -c "import wn; w = wn.Wordnet('oewn:2025+'); print(w.synsets('dog', pos='n'))"
+
+docker compose -f .devcontainer/docker-compose.yml run --rm hovsg-dev \
+  python -c "import wn; print(wn.lexicons())"
+```
+The first command should print a non-empty list of synsets, and the second
+should include `oewn:2025+`.
+
 For GUI rendering on a Linux/X11 host, allow the container user to connect to
 the host display before starting or rebuilding the container:
 ```bash

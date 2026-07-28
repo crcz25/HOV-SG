@@ -3,7 +3,7 @@
 import logging
 
 import numpy as np
-from scipy.special import expit
+from scipy.special import expit, logsumexp
 
 
 _NORM_EPSILON = 1e-8
@@ -141,6 +141,68 @@ def compute_semantic_margin_uncertainty(
         "semantic_margin": semantic_margin,
         "c_sem": c_sem,
         "u_sem": float(1.0 - c_sem),
+    }
+
+
+def compute_vocabulary_membership(
+    embedding,
+    text_feats,
+    negative_text_feats,
+    logit_scale=100.0,
+    similarity=None,
+):
+    """Compute confidence that an object belongs to the configured vocabulary.
+
+    ``text_feats`` are the vocabulary classes and ``negative_text_feats`` are
+    the fixed, filtered negative-label bank.  ``similarity`` can be supplied
+    when the caller has already computed the vocabulary cosine vector for
+    label assignment.  The zero-norm result is intentionally conservative.
+    """
+    embedding = np.asarray(embedding, dtype=np.float64).reshape(-1)
+    text_feats = np.asarray(text_feats, dtype=np.float64)
+    negative_text_feats = np.asarray(negative_text_feats, dtype=np.float64)
+
+    if text_feats.ndim != 2 or text_feats.shape[0] == 0:
+        raise ValueError("text_feats must be a non-empty two-dimensional array")
+    if negative_text_feats.ndim != 2 or negative_text_feats.shape[0] == 0:
+        raise ValueError(
+            "negative_text_feats must be a non-empty two-dimensional array"
+        )
+    if embedding.shape[0] != text_feats.shape[1]:
+        raise ValueError("embedding and text_feats must have the same feature dimension")
+    if negative_text_feats.shape[1] != embedding.shape[0]:
+        raise ValueError(
+            "embedding and negative_text_feats must have the same feature dimension"
+        )
+
+    embedding_norm = np.linalg.norm(embedding)
+    if embedding_norm < _NORM_EPSILON:
+        return {
+            "vocab_log_partition": None,
+            "negative_log_partition": None,
+            "c_mem": 0.0,
+            "u_mem": 1.0,
+        }
+
+    if similarity is None:
+        vocab_similarities = compute_cosine_similarities(embedding, text_feats)
+    else:
+        vocab_similarities = np.asarray(similarity, dtype=np.float64).reshape(-1)
+        if vocab_similarities.shape != (text_feats.shape[0],):
+            raise ValueError("similarity must have one value per text feature")
+    negative_similarities = compute_cosine_similarities(
+        embedding, negative_text_feats
+    )
+
+    alpha = float(logit_scale)
+    vocab_log_partition = float(logsumexp(alpha * vocab_similarities))
+    negative_log_partition = float(logsumexp(alpha * negative_similarities))
+    c_mem = float(expit(vocab_log_partition - negative_log_partition))
+    return {
+        "vocab_log_partition": vocab_log_partition,
+        "negative_log_partition": negative_log_partition,
+        "c_mem": c_mem,
+        "u_mem": float(1.0 - c_mem),
     }
 
 

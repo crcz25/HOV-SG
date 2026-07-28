@@ -22,6 +22,7 @@ def make_graph(objects):
         label_classes=["chair", "table"],
         label_synonym_mask=build_synonym_eligibility_mask(text_feats, 0.75),
         semantic_uncertainty_logit_scale=1.0,
+        negative_text_feats=np.array([[0.0, 1.0]]),
     )
 
 
@@ -38,6 +39,11 @@ def test_recompute_uses_existing_assignment_without_changing_name():
     assert obj.label_cos_sim == pytest.approx(1.0)
     assert obj.runner_up_idx == 1
     assert obj.semantic_margin == pytest.approx(1.0)
+    assert obj.vocab_log_partition == pytest.approx(np.log(np.exp(1.0) + 1.0))
+    assert obj.negative_log_partition == pytest.approx(0.0)
+    assert obj.c_mem == pytest.approx(
+        1.0 / (1.0 + np.exp(-np.log(np.exp(1.0) + 1.0)))
+    )
 
 
 def test_recompute_does_not_guess_missing_legacy_label_index():
@@ -64,3 +70,8 @@ def test_recompute_does_not_guess_missing_legacy_label_index():
     assert obj.semantic_margin is None
     assert obj.c_sem is None
     assert obj.u_sem is None
+    assert obj.vocab_log_partition == pytest.approx(np.log(np.exp(1.0) + 1.0))
+    assert obj.negative_log_partition == pytest.approx(0.0)
+    assert obj.c_mem == pytest.approx(
+        1.0 / (1.0 + np.exp(-np.log(np.exp(1.0) + 1.0)))
+    )

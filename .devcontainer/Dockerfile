@@ -9,6 +9,7 @@ ARG DEBIAN_FRONTEND=noninteractive
 ENV MAMBA_ROOT_PREFIX=/opt/conda \
     CONDA_DEFAULT_ENV=hovsg \
     PATH=/opt/conda/envs/hovsg/bin:/opt/conda/bin:${PATH} \
+    HOME=/home/${USERNAME} \
     PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1
 
@@ -79,6 +80,18 @@ RUN --mount=type=cache,target=/opt/conda/pkgs,sharing=locked \
     && micromamba run -p /opt/conda/envs/hovsg python -m pip check \
     && micromamba clean -a -y \
     && chown -R "${USERNAME}:${USERNAME}" "${MAMBA_ROOT_PREFIX}"
+
+RUN python -m pip install --no-cache-dir wn
+
+USER "${USERNAME}"
+
+RUN curl -L -o /tmp/oewn-2025-plus.xml.gz \
+    https://github.com/globalwordnet/english-wordnet/releases/download/2025-edition/english-wordnet-2025-plus.xml.gz \
+    && (python -c "import wn; wn.add('/tmp/oewn-2025-plus.xml.gz')" \
+        || python -c "import wn; lexicon = 'oewn:2025+'; assert any(f'{item.id}:{item.version}' == lexicon for item in wn.lexicons()), 'OEWN add failed and the lexicon is not registered'; print(f'{lexicon} is already registered; continuing')") \
+    && rm -f /tmp/oewn-2025-plus.xml.gz
+
+USER root
 
 COPY .devcontainer/entrypoint.sh /usr/local/bin/devcontainer-entrypoint
 RUN chmod +x /usr/local/bin/devcontainer-entrypoint \

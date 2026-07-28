@@ -4,6 +4,7 @@ import pytest
 from hovsg.utils.uncertainty import (
     build_synonym_eligibility_mask,
     compute_semantic_margin_uncertainty,
+    compute_vocabulary_membership,
 )
 
 
@@ -98,6 +99,33 @@ def test_precomputed_similarity_vector_is_reused():
     assert result["label_cos_sim"] == pytest.approx(0.4)
     assert result["runner_up_cos_sim"] == pytest.approx(0.3)
     assert result["semantic_margin"] == pytest.approx(0.1)
+
+
+def test_vocabulary_membership_uses_stable_log_partitions():
+    result = compute_vocabulary_membership(
+        np.array([1.0, 0.0]),
+        np.eye(2),
+        np.array([[0.0, 1.0]]),
+        logit_scale=1000.0,
+    )
+
+    assert result["vocab_log_partition"] == pytest.approx(1000.0)
+    assert result["negative_log_partition"] == pytest.approx(0.0)
+    assert result["c_mem"] == pytest.approx(1.0)
+    assert result["u_mem"] == pytest.approx(0.0)
+
+
+def test_vocabulary_membership_zero_embedding_is_degenerate():
+    result = compute_vocabulary_membership(
+        np.zeros(2), np.eye(2), np.eye(2), logit_scale=100.0
+    )
+
+    assert result == {
+        "vocab_log_partition": None,
+        "negative_log_partition": None,
+        "c_mem": 0.0,
+        "u_mem": 1.0,
+    }
 
 
 @pytest.mark.parametrize("tau", [0.0, 1.0, -0.1, 1.1])

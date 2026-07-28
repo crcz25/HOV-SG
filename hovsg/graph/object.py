@@ -33,6 +33,10 @@ class Object:
         self.semantic_margin = None
         self.c_sem = None
         self.u_sem = None
+        self.vocab_log_partition = None
+        self.negative_log_partition = None
+        self.c_mem = None
+        self.u_mem = None
         self.c_det = None
         self.u_det = None
 
@@ -76,6 +80,18 @@ class Object:
             ),
             "c_sem": float(self.c_sem) if self.c_sem is not None else None,
             "u_sem": float(self.u_sem) if self.u_sem is not None else None,
+            "vocab_log_partition": (
+                float(self.vocab_log_partition)
+                if self.vocab_log_partition is not None
+                else None
+            ),
+            "negative_log_partition": (
+                float(self.negative_log_partition)
+                if self.negative_log_partition is not None
+                else None
+            ),
+            "c_mem": float(self.c_mem) if self.c_mem is not None else None,
+            "u_mem": float(self.u_mem) if self.u_mem is not None else None,
             "c_det": float(self.c_det) if self.c_det is not None else None,
             "u_det": float(self.u_det) if self.u_det is not None else None,
         }
@@ -103,6 +119,10 @@ class Object:
             self.semantic_margin = metadata.get("semantic_margin")
             self.c_sem = metadata.get("c_sem")
             self.u_sem = metadata.get("u_sem")
+            self.vocab_log_partition = metadata.get("vocab_log_partition")
+            self.negative_log_partition = metadata.get("negative_log_partition")
+            self.c_mem = metadata.get("c_mem")
+            self.u_mem = metadata.get("u_mem")
             self.c_det = metadata.get("c_det")
             self.u_det = metadata.get("u_det")
 
@@ -138,6 +158,10 @@ class Object:
         self.semantic_margin = None
         self.c_sem = None
         self.u_sem = None
+        self.vocab_log_partition = None
+        self.negative_log_partition = None
+        self.c_mem = None
+        self.u_mem = None
         return self
 
     def __str__(self) -> str:

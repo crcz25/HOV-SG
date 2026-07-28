@@ -53,10 +53,12 @@ from hovsg.utils.graph_utils import (
 
 from hovsg.graph.navigation_graph import NavigationGraph
 from hovsg.utils.label_feats import get_label_feats
+from hovsg.utils.negative_labels import load_or_build_negative_label_feats
 from hovsg.utils.uncertainty import (
     build_synonym_eligibility_mask,
     compute_cosine_similarities,
     compute_semantic_margin_uncertainty,
+    compute_vocabulary_membership,
 )
 from hovsg.utils.detection_uncertainty import (
     accumulate_confidence,
@@ -73,6 +75,16 @@ from hovsg.utils.llm_utils import (
 )
 
 # pylint: disable=all
+
+
+def _pipeline_value(pipeline, key, default=None):
+    """Read a pipeline option from OmegaConf and lightweight test configs."""
+    if hasattr(pipeline, "get"):
+        return pipeline.get(key, default)
+    try:
+        return getattr(pipeline, key)
+    except (AttributeError, KeyError):
+        return default
 
 
 class Graph:
@@ -96,6 +108,9 @@ class Graph:
         self.label_synonym_mask = None
         self.semantic_uncertainty_logit_scale = None
         self.semantic_uncertainty_synonym_threshold = None
+        self.negative_text_feats = None
+        self.vocab_membership_max_class_similarity = None
+        self.vocab_membership_negative_label_count = None
         self.rooms = []
         self.floors = []
         self.full_feats_array = []
@@ -653,6 +668,22 @@ class Graph:
         self.label_synonym_mask = build_synonym_eligibility_mask(
             text_feats, self.semantic_uncertainty_synonym_threshold
         )
+        self.vocab_membership_max_class_similarity = _pipeline_value(
+            self.cfg.pipeline, "vocab_membership_max_class_similarity"
+        )
+        self.vocab_membership_negative_label_count = _pipeline_value(
+            self.cfg.pipeline, "vocab_membership_negative_label_count"
+        )
+        # Older configs intentionally remain usable without triggering the
+        # one-time WordNet download/build step.
+        if self.vocab_membership_max_class_similarity is not None:
+            self.negative_text_feats = load_or_build_negative_label_feats(
+                self.clip_model,
+                self.clip_feat_dim,
+                self.label_text_feats,
+                max_class_similarity=self.vocab_membership_max_class_similarity,
+                negative_label_count=self.vocab_membership_negative_label_count,
+            )
 
         pbar = tqdm(enumerate(self.floors), total=len(self.floors), desc="Floor: ")
         margin = 0.2
@@ -759,6 +790,16 @@ class Graph:
                 )
                 for field, value in semantic_values.items():
                     setattr(object, field, value)
+                if getattr(self, "negative_text_feats", None) is not None:
+                    membership_values = compute_vocabulary_membership(
+                        object.embedding,
+                        text_feats,
+                        self.negative_text_feats,
+                        logit_scale=self.semantic_uncertainty_logit_scale,
+                        similarity=similarity,
+                    )
+                    for field, value in membership_values.items():
+                        setattr(object, field, value)
                 # if [i for i in ["wall", "floor", "ceiling", "window", "door", "roof", "railing"] if i in name]:
                 #     continue
                 obj_pbar.set_description(
@@ -795,20 +836,46 @@ class Graph:
             "c_sem",
             "u_sem",
         )
+        negative_text_feats = getattr(self, "negative_text_feats", None)
         for object in self.objects:
+            similarity = None
+            if negative_text_feats is not None:
+                similarity = compute_cosine_similarities(
+                    object.embedding, self.label_text_feats
+                )
             if getattr(object, "label_idx", None) is None:
                 for field in semantic_fields:
                     setattr(object, field, None)
-                continue
+            else:
+                semantic_values = compute_semantic_margin_uncertainty(
+                    object.embedding,
+                    self.label_text_feats,
+                    label_idx=object.label_idx,
+                    eligibility_mask=self.label_synonym_mask,
+                    logit_scale=logit_scale,
+                    similarity=similarity,
+                )
+                for field, value in semantic_values.items():
+                    setattr(object, field, value)
 
-            semantic_values = compute_semantic_margin_uncertainty(
+            membership_fields = (
+                "vocab_log_partition",
+                "negative_log_partition",
+                "c_mem",
+                "u_mem",
+            )
+            if negative_text_feats is None:
+                for field in membership_fields:
+                    setattr(object, field, None)
+                continue
+            membership_values = compute_vocabulary_membership(
                 object.embedding,
                 self.label_text_feats,
-                label_idx=object.label_idx,
-                eligibility_mask=self.label_synonym_mask,
+                negative_text_feats,
                 logit_scale=logit_scale,
+                similarity=similarity,
             )
-            for field, value in semantic_values.items():
+            for field, value in membership_values.items():
                 setattr(object, field, value)
 
     def propagate_semantic_uncertainty_to_rooms(self):

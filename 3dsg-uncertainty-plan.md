@@ -106,7 +106,6 @@ Compare each against Bernoulli. If none improve significantly, Bernoulli is the 
 
 6. **arXiv:2603.25450**: "Cross-Model Disagreement as a Label-Free Correctness Signal". Closest conceptual prior to semantic uncertainty (cross-model rather than cross-modal). We can frame the semantic uncertainty as the cross-modal instantiation of this principle inside 3DSG nodes.
 
-7. **Farquhar et al., Nature 2024**: Semantic entropy for hallucination detection in LLMs. Conceptual anchor for semantic uncertainty "free signal" framing.
 
 
 ## Positioning
