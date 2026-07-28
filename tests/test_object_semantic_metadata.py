@@ -12,7 +12,7 @@ SEMANTIC_FIELDS = (
     "runner_up_idx",
     "runner_up_cos_sim",
     "semantic_margin",
-    "c_sem",
+    "p_sem",
     "u_sem",
 )
 
@@ -75,7 +75,7 @@ def test_metadata_without_optional_uncertainty_fields_loads(tmp_path, stub_open3
 
     for field in SEMANTIC_FIELDS:
         assert getattr(restored, field) is None
-    for field in ("vocab_log_partition", "negative_log_partition", "c_mem", "u_mem"):
+    for field in ("vocab_log_partition", "negative_log_partition", "p_mem", "u_mem"):
         assert getattr(restored, field) is None
     assert not hasattr(restored, "semantic_uncertainty")
 
@@ -87,7 +87,7 @@ def test_membership_metadata_round_trip(tmp_path, stub_open3d_io):
     source.embedding = np.array([1.0, 0.0])
     source.vocab_log_partition = np.float64(12.5)
     source.negative_log_partition = np.float32(3.25)
-    source.c_mem = np.float64(0.9)
+    source.p_mem = np.float64(0.9)
     source.u_mem = np.float32(0.1)
     source.save(tmp_path)
 
@@ -96,7 +96,7 @@ def test_membership_metadata_round_trip(tmp_path, stub_open3d_io):
 
     assert restored.vocab_log_partition == pytest.approx(12.5)
     assert restored.negative_log_partition == pytest.approx(3.25)
-    assert restored.c_mem == pytest.approx(0.9)
+    assert restored.p_mem == pytest.approx(0.9)
     assert restored.u_mem == pytest.approx(0.1)
 
 
@@ -132,8 +132,8 @@ def test_merge_normalizes_embedding_and_invalidates_margin_fields():
     assert merged.label_idx == 3
     for field in SEMANTIC_FIELDS[1:]:
         assert getattr(merged, field) is None
-    for field in ("vocab_log_partition", "negative_log_partition", "c_mem", "u_mem"):
+    for field in ("vocab_log_partition", "negative_log_partition", "p_mem", "u_mem"):
         setattr(left, field, 0.5)
     merged = left + right
-    for field in ("vocab_log_partition", "negative_log_partition", "c_mem", "u_mem"):
+    for field in ("vocab_log_partition", "negative_log_partition", "p_mem", "u_mem"):
         assert getattr(merged, field) is None

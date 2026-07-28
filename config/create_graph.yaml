@@ -41,14 +41,36 @@ pipeline:
   merge_type: sequential # hierarchical, sequential
   save_intermediate_results: false
   obj_labels: HM3DSEM_LABELS
+  # --- Object-level uncertainty signals -------------------------------------
+  # Every signal is reported as a confidence P and its complement U = 1 - P.
+  #
+  # Semantic Uncertainty: P_sem = sigma(alpha * m_i) with
+  #   m_i = cos(v_i, t_l) - max_{c: cos(t_c, t_l) < tau} cos(v_i, t_c)
+  # alpha is CLIP's learned logit scale (100 at convergence), NOT a fitted
+  # parameter: do not tune it to make the numbers look calibrated.
   semantic_uncertainty_logit_scale: 100.0
-  # Calibrated against cached HM3D text embeddings; excludes the named synonym pairs.
+  # tau. Calibrated against cached HM3D text embeddings; excludes the named
+  # synonym pairs. Raising it admits near-synonyms as competitors and shrinks
+  # every margin.
   semantic_uncertainty_synonym_threshold: 0.75
+  # Label Coherence: same conversion, but against in-map visual prototypes.
   # Deliberately independent copies of the semantic convention; changing the
   # semantic values above must not silently change Label Coherence.
   label_coherence_logit_scale: 100.0
   label_coherence_synonym_threshold: 0.9
+  # Cross-view Consistency: P_view = ||m_i||, the norm of the running mean of
+  # the per-view unit embeddings. This threshold flags low support and is
+  # applied to the mean number of VIEWS PER POINT, not to the total count of
+  # point-view observations.
   cross_view_consistency_min_observations: 2
+  # Vocabulary Membership: P_mem = Z_C / (Z_C + Z_N) over the class set C and
+  # the mined negative bank N. Set max_class_similarity to null to disable the
+  # signal and skip the one-time WordNet download.
   vocab_membership_max_class_similarity: 0.5
+  # |N| directly shifts P_mem: the equation compares the partition sum over C
+  # against the sum over N, so a bank much larger than the vocabulary lowers
+  # P_mem for every object. With HM3DSEM_LABELS |C| = 1624 and the full mined
+  # bank is roughly 5k, a ~3:1 ratio. Setting a count here caps |N| by keeping
+  # the labels furthest from every class. null keeps the whole bank.
   vocab_membership_negative_label_count: null
   merge_objects_graph: false

@@ -14,6 +14,15 @@ LOGGER = logging.getLogger(__name__)
 DEFAULT_LEXICON = "oewn:2025+"
 DEFAULT_MIN_NEGATIVE_LABELS = 200
 
+#: Bumped whenever the mining rule changes, so caches built by an older rule
+#: are rebuilt instead of being silently reused under new semantics.
+MINING_VERSION = 2
+
+#: Longest lemma kept. Open English Wordnet noun lemmas run to full titles of
+#: works and events; anything beyond a short compound noun is not a plausible
+#: label for a scanned object.
+MAX_NEGATIVE_LABEL_WORDS = 3
+
 
 def _normalise_rows(features):
     features = np.asarray(features, dtype=np.float64)
@@ -31,8 +40,37 @@ def _feature_fingerprint(features):
     return hashlib.sha256(features.tobytes()).hexdigest()
 
 
+def is_common_noun_lemma(lemma):
+    """Return whether a Wordnet noun lemma is usable as a negative label.
+
+    ``wn.Wordnet.words(pos="n")`` returns every noun in the lexicon, which for
+    Open English Wordnet includes proper nouns and named entities: people
+    ("1st Baron Beaverbrook"), places ("'s Gravenhage"), dates
+    ("15 August 1945") and titles of works ("1 Maccabees"). Those are not
+    object categories, and admitting them both dilutes the negative bank and
+    inflates its size, which shifts P_mem downward for every object because
+    eq. (membership) compares partition *sums* over C and N.
+
+    The rule keeps lemmas that are entirely lowercase (Wordnet capitalizes
+    proper nouns), alphabetic apart from internal spaces and hyphens, and at
+    most :data:`MAX_NEGATIVE_LABEL_WORDS` words long.
+    """
+    lemma = str(lemma).strip()
+    if not lemma or lemma != lemma.lower():
+        return False
+    words = lemma.split()
+    if not 1 <= len(words) <= MAX_NEGATIVE_LABEL_WORDS:
+        return False
+    return all(word.replace("-", "").isalpha() for word in words)
+
+
 def _candidate_words(lexicon_name):
-    """Return reproducibly ordered noun lemmas from Open English Wordnet."""
+    """Return reproducibly ordered common-noun lemmas from Open English Wordnet.
+
+    The result is sorted and deduplicated, so the mined bank depends only on
+    the lexicon version and the filter rule -- never on scene content or on
+    iteration order.
+    """
     try:
         import wn
     except ImportError as exc:  # pragma: no cover - depends on deployment extras
@@ -42,7 +80,8 @@ def _candidate_words(lexicon_name):
         ) from exc
 
     oewn = wn.Wordnet(lexicon_name)
-    return sorted({word.lemma().replace("_", " ") for word in oewn.words(pos="n")})
+    lemmas = {word.lemma().replace("_", " ") for word in oewn.words(pos="n")}
+    return sorted(lemma for lemma in lemmas if is_common_noun_lemma(lemma))
 
 
 def _read_cached_bank(cache_path, words_path, metadata_path):
@@ -77,10 +116,26 @@ def load_or_build_negative_label_feats(
 ):
     """Load or mine the fixed negative-label text feature bank.
 
+    Mining is scene-independent and reproducible: candidates are the common
+    noun lemmas of ``lexicon`` (see :func:`is_common_noun_lemma`), sorted and
+    deduplicated, encoded with the same CLIP text templates as the vocabulary,
+    and kept when their maximum cosine similarity to any class in C is below
+    ``max_class_similarity``. Nothing about the current scene enters the
+    selection.
+
     The vocabulary features are supplied by the caller, so this utility never
     reloads or recomputes the positive vocabulary.  Cache metadata records the
-    threshold and vocabulary fingerprint to avoid silently reusing a bank
-    produced for a different configuration.
+    threshold, mining rule version and vocabulary fingerprint to avoid silently
+    reusing a bank produced for a different configuration.
+
+    Returns rows that are already unit-normalized, so callers pass
+    ``assume_normalized=True`` into
+    :func:`hovsg.utils.uncertainty.compute_vocabulary_membership`.
+
+    Note that ``|N|`` directly shifts P_mem: eq. (membership) compares the
+    partition sum over C against the sum over N, so a bank an order of
+    magnitude larger than the vocabulary lowers P_mem for every object.
+    ``negative_label_count`` is the control for that ratio.
     """
     label_text_feats = np.asarray(label_text_feats, dtype=np.float64)
     if label_text_feats.ndim != 2 or label_text_feats.shape[0] == 0:
@@ -116,8 +171,13 @@ def load_or_build_negative_label_feats(
         "max_class_similarity": max_class_similarity,
         "negative_label_count": negative_label_count,
         "label_feature_fingerprint": _feature_fingerprint(label_text_feats),
+        "mining_version": MINING_VERSION,
+        "max_negative_label_words": MAX_NEGATIVE_LABEL_WORDS,
+        "normalized": True,
     }
-    cache_matches = cache_metadata is None or all(
+    # A missing metadata file means the bank predates this record and its
+    # provenance is unknown, so it is rebuilt rather than trusted.
+    cache_matches = cache_metadata is not None and all(
         cache_metadata.get(key) == value for key, value in expected_metadata.items()
     )
     if cache_matches:
@@ -152,12 +212,26 @@ def load_or_build_negative_label_feats(
     normalized_candidates = _normalise_rows(candidate_feats)
     normalized_classes = _normalise_rows(label_text_feats)
     max_class_similarities = (normalized_candidates @ normalized_classes.T).max(axis=1)
-    keep = max_class_similarities < max_class_similarity
+    # A zero-norm or non-finite candidate encoding carries no direction, so it
+    # would contribute exp(0) to Z_N regardless of the object: drop it rather
+    # than let it act as a constant floor on the negative partition.
+    usable = np.isfinite(normalized_candidates).all(axis=1) & (
+        np.linalg.norm(normalized_candidates, axis=1) > 0.5
+    )
+    keep = usable & (max_class_similarities < max_class_similarity)
     negative_words = [word for word, include in zip(candidate_words, keep) if include]
-    negative_text_feats = candidate_feats[keep]
-    if negative_label_count is not None:
-        negative_words = negative_words[:negative_label_count]
-        negative_text_feats = negative_text_feats[:negative_label_count]
+    # Stored already normalized so eq. (membership) never re-normalizes ~20k
+    # rows per object; callers pass assume_normalized=True.
+    negative_text_feats = normalized_candidates[keep]
+    if negative_label_count is not None and len(negative_words) > negative_label_count:
+        # Truncating the alphabetically sorted list would keep whatever happens
+        # to start with "a". Keep the labels furthest from every vocabulary
+        # class instead, which is what the bank is selected for, then restore
+        # alphabetical order so the stored bank stays deterministic.
+        kept_similarities = max_class_similarities[keep]
+        chosen = np.sort(np.argsort(kept_similarities, kind="stable")[:negative_label_count])
+        negative_words = [negative_words[i] for i in chosen]
+        negative_text_feats = negative_text_feats[chosen]
     if len(negative_words) == 0:
         raise RuntimeError("Negative-label filtering produced an empty bank")
 

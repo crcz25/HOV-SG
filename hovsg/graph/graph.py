@@ -4,6 +4,7 @@
 
 import os
 import copy
+import logging
 from typing import Any, Dict, List, Set, Tuple, Union
 from pathlib import Path
 
@@ -56,17 +57,22 @@ from hovsg.graph.navigation_graph import NavigationGraph
 from hovsg.utils.label_feats import get_label_feats
 from hovsg.utils.negative_labels import load_or_build_negative_label_feats
 from hovsg.utils.uncertainty import (
+    COHERENCE_FIELDS,
+    MEMBERSHIP_FIELDS,
+    SEMANTIC_FIELDS,
     build_synonym_eligibility_mask,
     compute_cosine_similarities,
     compute_label_coherence_uncertainty,
     compute_semantic_margin_uncertainty,
     compute_vocabulary_membership,
+    normalize_rows,
 )
 from hovsg.utils.detection_uncertainty import (
     accumulate_confidence,
+    confidence_from_sum,
     finalize_confidence_array,
     mask_predicted_iou,
-    object_confidence_from_points,
+    object_confidence_sum_from_points,
     uncertainty_from_confidence,
 )
 from hovsg.utils.cross_view_consistency import (
@@ -112,6 +118,8 @@ class Graph:
         self.label_text_feats = None
         self.label_classes = None
         self.label_synonym_mask = None
+        self.label_text_feats_normalized = None
+        self._negative_text_feats_normalized = None
         self.semantic_uncertainty_logit_scale = None
         self.semantic_uncertainty_synonym_threshold = None
         self.label_coherence_logit_scale = None
@@ -216,7 +224,7 @@ class Graph:
         cross_view_sum = np.zeros(
             (n_points, self.clip_feat_dim), dtype=np.float64
         )
-        cross_view_count = np.zeros((n_points, 1), dtype=np.int64)
+        cross_view_count = np.zeros(n_points, dtype=np.int64)
 
         # extract features for each frame
         frames_pcd = []
@@ -281,7 +289,7 @@ class Graph:
         self.full_conf_array = finalize_confidence_array(sum_conf, counter_conf)
         self.full_conf_array: np.ndarray
         self.full_cross_view_sum = cross_view_sum
-        self.full_cross_view_count = cross_view_count.reshape(-1)
+        self.full_cross_view_count = cross_view_count
         
         # free memory
         del sum_features, counter, sum_conf, counter_conf, cross_view_sum, cross_view_count
@@ -315,12 +323,16 @@ class Graph:
         masks_confs = []
         masks_cross_view_sums = []
         masks_cross_view_counts = []
+        masks_cross_view_point_counts = []
         for i, mask_3d in tqdm(enumerate(self.mask_pcds), desc="Fusing features"):
             # find the points in the mask
             mask_3d = mask_3d.voxel_down_sample(self.cfg.pipeline.voxel_size * 2)
             points = np.asarray(mask_3d.points)
+            # Keep the confidence sum and point count, not just their ratio, so
+            # a later object merge yields the exact pooled mean (see
+            # Object.__add__).
             masks_confs.append(
-                object_confidence_from_points(self.full_conf_array, tree_pcd, points)
+                object_confidence_sum_from_points(self.full_conf_array, tree_pcd, points)
             )
             dist, idx = tree_pcd.query(points, k=1, workers=-1)
             feats = self.full_feats_array[idx]
@@ -334,22 +346,32 @@ class Graph:
                     np.zeros(self.clip_feat_dim, dtype=self.full_cross_view_sum.dtype)
                 )
                 masks_cross_view_counts.append(0)
+                masks_cross_view_point_counts.append(0)
                 continue
             feats, selected_indices = feats_denoise_dbscan_with_indices(
                 feats, eps=0.01, min_points=100
             )
-            selected_point_indices = idx[selected_indices]
+            # The cross-view evidence is gathered over exactly the points whose
+            # features survived DBSCAN and were fused into v_i, so m_i is the
+            # mean of the same observation set the fusion averaged.
+            selected_point_indices = np.unique(idx[selected_indices])
             masks_cross_view_sums.append(
                 np.sum(self.full_cross_view_sum[selected_point_indices], axis=0)
             )
             masks_cross_view_counts.append(
                 int(np.sum(self.full_cross_view_count[selected_point_indices]))
             )
+            # Number of distinct contributing points, so that the low-support
+            # flag can threshold views per point rather than point-views.
+            masks_cross_view_point_counts.append(
+                int(np.count_nonzero(self.full_cross_view_count[selected_point_indices]))
+            )
             masks_feats.append(feats)
         self.mask_feats = masks_feats
         self.mask_confs = masks_confs
         self.mask_cross_view_sums = masks_cross_view_sums
         self.mask_cross_view_counts = masks_cross_view_counts
+        self.mask_cross_view_point_counts = masks_cross_view_point_counts
         print("number of masks: ", len(self.mask_feats))
         print("number of pcds in hovsg: ", len(self.mask_pcds))
         assert len(self.mask_pcds) == len(self.mask_confs) == len(self.mask_feats)
@@ -678,9 +700,20 @@ class Graph:
         :param object_feat: np.ndarray, The object feature
         :param text_feats: np.ndarray, The text features
         :param classes: List, The list of classes
-        :return: tuple, The object class, its row index, and all similarities
+        :return: tuple, The object class, its row index, and all similarities.
+                 The name and index are ``None`` for a degenerate embedding.
         """
-        similarity = compute_cosine_similarities(object_feat, text_feats)
+        similarity = compute_cosine_similarities(
+            object_feat,
+            text_feats,
+            assume_normalized=text_feats is self.label_text_feats_normalized,
+        )
+        # A zero-norm embedding yields an all-zero similarity vector, whose
+        # argmax is class 0 for arbitrary reasons. Assigning that label would
+        # give the object a fabricated class and let it pollute the visual
+        # prototypes, so it is left unlabeled instead.
+        if not np.any(similarity):
+            return None, None, similarity
         # find the class with the highest similarity
         label_idx = int(np.argmax(similarity))
         return classes[label_idx], label_idx, similarity
@@ -699,6 +732,9 @@ class Graph:
             self.cfg.main.save_path,
         )
         self.label_text_feats = text_feats
+        # The cached CLIP text bank is stored unnormalized. Normalize it once
+        # here instead of re-normalizing 1624 x 1024 rows for every object.
+        self.label_text_feats_normalized = normalize_rows(text_feats)
         self.label_classes = classes
         self.semantic_uncertainty_logit_scale = float(
             self.cfg.pipeline.semantic_uncertainty_logit_scale
@@ -727,7 +763,7 @@ class Graph:
         if self.cross_view_consistency_min_observations < 1:
             raise ValueError("cross_view_consistency_min_observations must be at least 1")
         self.label_synonym_mask = build_synonym_eligibility_mask(
-            text_feats, self.semantic_uncertainty_synonym_threshold
+            self.label_text_feats_normalized, self.semantic_uncertainty_synonym_threshold
         )
         self.vocab_membership_max_class_similarity = _pipeline_value(
             self.cfg.pipeline, "vocab_membership_max_class_similarity"
@@ -834,13 +870,25 @@ class Graph:
                 embedding_norm = np.linalg.norm(object.embedding)
                 if embedding_norm >= 1e-8:
                     object.embedding = object.embedding / embedding_norm
-                object.c_det = float(self.mask_confs[mask_idx])
-                object.u_det = uncertainty_from_confidence(object.c_det)
+                object.detection_conf_sum, object.detection_point_count = (
+                    self.mask_confs[mask_idx]
+                )
+                object.p_det = confidence_from_sum(
+                    object.detection_conf_sum, object.detection_point_count
+                )
+                object.u_det = (
+                    uncertainty_from_confidence(object.p_det)
+                    if object.p_det is not None
+                    else None
+                )
                 object.cross_view_consistency_min_observations = (
                     self.cross_view_consistency_min_observations
                 )
                 cross_view_sums = getattr(self, "mask_cross_view_sums", None)
                 cross_view_counts = getattr(self, "mask_cross_view_counts", None)
+                cross_view_point_counts = getattr(
+                    self, "mask_cross_view_point_counts", None
+                )
                 if (
                     cross_view_sums is not None
                     and cross_view_counts is not None
@@ -851,40 +899,30 @@ class Graph:
                         cross_view_sums[mask_idx], dtype=np.float64
                     )
                     object.cross_view_count = int(cross_view_counts[mask_idx])
+                    object.cross_view_point_count = (
+                        int(cross_view_point_counts[mask_idx])
+                        if cross_view_point_counts is not None
+                        and mask_idx < len(cross_view_point_counts)
+                        else None
+                    )
                     (
-                        object.c_view,
+                        object.p_view,
                         object.u_view,
                         object.cross_view_sufficient,
                     ) = cross_view_values(
                         object.cross_view_resultant_sum,
                         object.cross_view_count,
                         min_observations=self.cross_view_consistency_min_observations,
+                        point_count=object.cross_view_point_count,
                     )
                 name, label_idx, similarity = self.identify_object(
-                    object.embedding, text_feats, classes
+                    object.embedding, self.label_text_feats_normalized, classes
                 )
                 object.name = name
                 object.label_idx = label_idx
-                semantic_values = compute_semantic_margin_uncertainty(
-                    object.embedding,
-                    text_feats,
-                    label_idx=label_idx,
-                    eligibility_mask=self.label_synonym_mask,
-                    logit_scale=self.semantic_uncertainty_logit_scale,
-                    similarity=similarity,
-                )
-                for field, value in semantic_values.items():
-                    setattr(object, field, value)
-                if getattr(self, "negative_text_feats", None) is not None:
-                    membership_values = compute_vocabulary_membership(
-                        object.embedding,
-                        text_feats,
-                        self.negative_text_feats,
-                        logit_scale=self.semantic_uncertainty_logit_scale,
-                        similarity=similarity,
-                    )
-                    for field, value in membership_values.items():
-                        setattr(object, field, value)
+                # Called through Graph so lightweight test/config stand-ins
+                # that invoke segment_objects unbound need not provide it.
+                Graph._assign_object_semantic_signals(self, object, similarity)
                 # if [i for i in ["wall", "floor", "ceiling", "window", "door", "roof", "railing"] if i in name]:
                 #     continue
                 obj_pbar.set_description(
@@ -894,6 +932,62 @@ class Graph:
                 object.vertices = np.array(self.mask_pcds[mask_idx].points)[:, [0, 2]]
                 floor.rooms[closest_room_idx].add_object(object)
                 self.objects.append(object)
+
+    def _normalized_negative_text_feats(self):
+        """Return the negative bank with unit rows, normalizing at most once."""
+        negative_text_feats = getattr(self, "negative_text_feats", None)
+        if negative_text_feats is None:
+            return None
+        cached = getattr(self, "_negative_text_feats_normalized", None)
+        if cached is None or cached.shape != np.shape(negative_text_feats):
+            cached = normalize_rows(negative_text_feats)
+            self._negative_text_feats_normalized = cached
+        return cached
+
+    def _assign_object_semantic_signals(self, object, similarity=None):
+        """Write Semantic Uncertainty and Vocabulary Membership onto one object.
+
+        Both signals read the same vocabulary cosine vector, so ``similarity``
+        is computed once and shared. Label Coherence is deliberately not
+        computed here: it needs the visual prototypes of the complete,
+        post-merge object set (see :meth:`recompute_label_coherence`).
+        """
+        text_feats = self.label_text_feats_normalized
+        logit_scale = self.semantic_uncertainty_logit_scale
+        if similarity is None and object.embedding is not None:
+            similarity = compute_cosine_similarities(
+                object.embedding, text_feats, assume_normalized=True
+            )
+
+        if getattr(object, "label_idx", None) is None:
+            for field in SEMANTIC_FIELDS:
+                setattr(object, field, None)
+        else:
+            for field, value in compute_semantic_margin_uncertainty(
+                object.embedding,
+                text_feats,
+                label_idx=object.label_idx,
+                eligibility_mask=self.label_synonym_mask,
+                logit_scale=logit_scale,
+                similarity=similarity,
+                assume_normalized=True,
+            ).items():
+                setattr(object, field, value)
+
+        negative_text_feats = Graph._normalized_negative_text_feats(self)
+        if negative_text_feats is None:
+            for field in MEMBERSHIP_FIELDS:
+                setattr(object, field, None)
+            return
+        for field, value in compute_vocabulary_membership(
+            object.embedding,
+            text_feats,
+            negative_text_feats,
+            logit_scale=logit_scale,
+            similarity=similarity,
+            assume_normalized=True,
+        ).items():
+            setattr(object, field, value)
 
     def recompute_cross_view_consistency(self):
         """Refresh derived cross-view values from persisted raw evidence."""
@@ -906,15 +1000,16 @@ class Graph:
             resultant_sum = getattr(object, "cross_view_resultant_sum", None)
             count = getattr(object, "cross_view_count", None)
             if resultant_sum is None or count is None:
-                object.c_view = None
+                object.p_view = None
                 object.u_view = None
                 object.cross_view_sufficient = None
                 continue
             object.cross_view_consistency_min_observations = min_observations
-            object.c_view, object.u_view, object.cross_view_sufficient = cross_view_values(
+            object.p_view, object.u_view, object.cross_view_sufficient = cross_view_values(
                 resultant_sum,
                 count,
                 min_observations=min_observations,
+                point_count=getattr(object, "cross_view_point_count", None),
             )
 
     def recompute_semantic_uncertainty(self):
@@ -935,55 +1030,11 @@ class Graph:
                 "Semantic logit scale must be configured before recomputation"
             )
 
-        semantic_fields = (
-            "label_cos_sim",
-            "runner_up_idx",
-            "runner_up_cos_sim",
-            "semantic_margin",
-            "c_sem",
-            "u_sem",
-        )
-        negative_text_feats = getattr(self, "negative_text_feats", None)
-        for object in self.objects:
-            similarity = None
-            if negative_text_feats is not None:
-                similarity = compute_cosine_similarities(
-                    object.embedding, self.label_text_feats
-                )
-            if getattr(object, "label_idx", None) is None:
-                for field in semantic_fields:
-                    setattr(object, field, None)
-            else:
-                semantic_values = compute_semantic_margin_uncertainty(
-                    object.embedding,
-                    self.label_text_feats,
-                    label_idx=object.label_idx,
-                    eligibility_mask=self.label_synonym_mask,
-                    logit_scale=logit_scale,
-                    similarity=similarity,
-                )
-                for field, value in semantic_values.items():
-                    setattr(object, field, value)
+        if getattr(self, "label_text_feats_normalized", None) is None:
+            self.label_text_feats_normalized = normalize_rows(self.label_text_feats)
 
-            membership_fields = (
-                "vocab_log_partition",
-                "negative_log_partition",
-                "c_mem",
-                "u_mem",
-            )
-            if negative_text_feats is None:
-                for field in membership_fields:
-                    setattr(object, field, None)
-                continue
-            membership_values = compute_vocabulary_membership(
-                object.embedding,
-                self.label_text_feats,
-                negative_text_feats,
-                logit_scale=logit_scale,
-                similarity=similarity,
-            )
-            for field, value in membership_values.items():
-                setattr(object, field, value)
+        for object in self.objects:
+            Graph._assign_object_semantic_signals(self, object)
 
         # Label Coherence is a companion estimator of the same labeling-error
         # event as Semantic Uncertainty. It is intentionally kept separate;
@@ -1001,7 +1052,9 @@ class Graph:
                 "recomputing Label Coherence"
             )
 
-        text_feats = np.asarray(self.label_text_feats, dtype=np.float64)
+        if getattr(self, "label_text_feats_normalized", None) is None:
+            self.label_text_feats_normalized = normalize_rows(self.label_text_feats)
+        text_feats = self.label_text_feats_normalized
         threshold = getattr(self, "label_coherence_synonym_threshold", None)
         if threshold is None:
             threshold = _pipeline_value(
@@ -1018,21 +1071,16 @@ class Graph:
         # Build the synonym mask once from the same cached vocabulary used by
         # Semantic Uncertainty. This does not invoke the text encoder.
         coherence_synonym_mask = build_synonym_eligibility_mask(text_feats, threshold)
+        # Prototypes are rebuilt from scratch on every call, so labels,
+        # embeddings, merges and deletions since the last call are all picked
+        # up; there is no partially updated cache to go stale.
         self.class_embedding_sum = {}
         self.class_count = {}
         self.class_prototype_full = {}
 
         normalized_embeddings = {}
         for object in self.objects:
-            coherence_fields = (
-                "coherence_prototype_cos_sim",
-                "coherence_runner_up_class",
-                "coherence_runner_up_cos_sim",
-                "label_coherence_margin",
-                "c_coh",
-                "u_coh",
-            )
-            for field in coherence_fields:
+            for field in COHERENCE_FIELDS:
                 setattr(object, field, None)
             embedding = getattr(object, "embedding", None)
             if embedding is None or getattr(object, "label_idx", None) is None:
@@ -1102,31 +1150,44 @@ class Graph:
             room.object_beliefs_combined = {}
 
             for object in room.objects:
-                if object.label_idx is None or object.c_sem is None or object.c_det is None:
-                    raise RuntimeError(
-                        "Objects must have label_idx, c_sem, and c_det before "
-                        "room belief propagation"
+                # An object whose embedding is degenerate, or whose label has
+                # no distinct competitor, has genuinely undefined P_sem: it
+                # carries no evidence about what the room contains and is
+                # skipped rather than entered with a substituted probability.
+                if (
+                    object.label_idx is None
+                    or object.p_sem is None
+                    or object.p_det is None
+                ):
+                    logging.getLogger(__name__).warning(
+                        "Skipping object %s in room belief propagation: "
+                        "label_idx=%s, P_sem=%s, P_det=%s",
+                        object.object_id,
+                        object.label_idx,
+                        object.p_sem,
+                        object.p_det,
                     )
+                    continue
                 class_idx = int(object.label_idx)
-                c_sem = float(np.clip(object.c_sem, 0.0, 1.0))
-                c_det = float(np.clip(object.c_det, 0.0, 1.0))
+                p_sem = float(np.clip(object.p_sem, 0.0, 1.0))
+                p_det = float(np.clip(object.p_det, 0.0, 1.0))
                 obj_id = str(object.object_id)
                 class_name = str(self.label_classes[class_idx])
 
                 room.object_beliefs_semantic[obj_id] = {
                     "class_idx": class_idx,
                     "class_name": class_name,
-                    "q": c_sem,
+                    "q": p_sem,
                 }
                 room.object_beliefs_detection[obj_id] = {
                     "class_idx": class_idx,
                     "class_name": class_name,
-                    "q": c_det,
+                    "q": p_det,
                 }
                 room.object_beliefs_combined[obj_id] = {
                     "class_idx": class_idx,
                     "class_name": class_name,
-                    "q": float(np.clip(c_det * c_sem, 0.0, 1.0)),
+                    "q": float(np.clip(p_det * p_sem, 0.0, 1.0)),
                 }
 
             room.compute_class_containment_beliefs()

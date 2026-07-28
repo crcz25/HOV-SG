@@ -41,7 +41,7 @@ def test_recompute_uses_existing_assignment_without_changing_name():
     assert obj.semantic_margin == pytest.approx(1.0)
     assert obj.vocab_log_partition == pytest.approx(np.log(np.exp(1.0) + 1.0))
     assert obj.negative_log_partition == pytest.approx(0.0)
-    assert obj.c_mem == pytest.approx(
+    assert obj.p_mem == pytest.approx(
         1.0 / (1.0 + np.exp(-np.log(np.exp(1.0) + 1.0)))
     )
 
@@ -54,7 +54,7 @@ def test_recompute_does_not_guess_missing_legacy_label_index():
         "runner_up_idx",
         "runner_up_cos_sim",
         "semantic_margin",
-        "c_sem",
+        "p_sem",
         "u_sem",
     ):
         setattr(obj, field, 0.5)
@@ -68,10 +68,10 @@ def test_recompute_does_not_guess_missing_legacy_label_index():
     assert obj.runner_up_idx is None
     assert obj.runner_up_cos_sim is None
     assert obj.semantic_margin is None
-    assert obj.c_sem is None
+    assert obj.p_sem is None
     assert obj.u_sem is None
     assert obj.vocab_log_partition == pytest.approx(np.log(np.exp(1.0) + 1.0))
     assert obj.negative_log_partition == pytest.approx(0.0)
-    assert obj.c_mem == pytest.approx(
+    assert obj.p_mem == pytest.approx(
         1.0 / (1.0 + np.exp(-np.log(np.exp(1.0) + 1.0)))
     )

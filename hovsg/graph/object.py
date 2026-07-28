@@ -7,8 +7,16 @@ import os
 import numpy as np
 import open3d as o3d
 
-from hovsg.utils.detection_uncertainty import uncertainty_from_confidence
+from hovsg.utils.detection_uncertainty import (
+    confidence_from_sum,
+    uncertainty_from_confidence,
+)
 from hovsg.utils.cross_view_consistency import cross_view_values
+from hovsg.utils.uncertainty import (
+    COHERENCE_FIELDS,
+    MEMBERSHIP_FIELDS,
+    SEMANTIC_FIELDS,
+)
 
 
 
@@ -32,23 +40,31 @@ class Object:
         self.runner_up_idx = None
         self.runner_up_cos_sim = None
         self.semantic_margin = None
-        self.c_sem = None
+        self.p_sem = None
         self.u_sem = None
         self.coherence_prototype_cos_sim = None
         self.coherence_runner_up_class = None
         self.coherence_runner_up_cos_sim = None
         self.label_coherence_margin = None
-        self.c_coh = None
+        self.p_coh = None
         self.u_coh = None
         self.vocab_log_partition = None
         self.negative_log_partition = None
-        self.c_mem = None
+        self.p_mem = None
         self.u_mem = None
-        self.c_det = None
+        # Detection: the raw point-confidence accumulators are stored so that
+        # merges recover the exact pooled mean regardless of merge order.
+        self.detection_conf_sum = None
+        self.detection_point_count = None
+        self.p_det = None
         self.u_det = None
+        # Cross-view: the *unnormalized* resultant sum of unit per-view
+        # embeddings and its observation count. The normalized fused embedding
+        # never replaces these; ||sum / count|| is the signal itself.
         self.cross_view_resultant_sum = None
         self.cross_view_count = None
-        self.c_view = None
+        self.cross_view_point_count = None
+        self.p_view = None
         self.u_view = None
         self.cross_view_sufficient = None
         self.cross_view_consistency_min_observations = 2
@@ -91,7 +107,7 @@ class Object:
                 if self.semantic_margin is not None
                 else None
             ),
-            "c_sem": float(self.c_sem) if self.c_sem is not None else None,
+            "p_sem": float(self.p_sem) if self.p_sem is not None else None,
             "u_sem": float(self.u_sem) if self.u_sem is not None else None,
             "coherence_prototype_cos_sim": (
                 float(self.coherence_prototype_cos_sim)
@@ -113,7 +129,7 @@ class Object:
                 if self.label_coherence_margin is not None
                 else None
             ),
-            "c_coh": float(self.c_coh) if self.c_coh is not None else None,
+            "p_coh": float(self.p_coh) if self.p_coh is not None else None,
             "u_coh": float(self.u_coh) if self.u_coh is not None else None,
             "vocab_log_partition": (
                 float(self.vocab_log_partition)
@@ -125,9 +141,19 @@ class Object:
                 if self.negative_log_partition is not None
                 else None
             ),
-            "c_mem": float(self.c_mem) if self.c_mem is not None else None,
+            "p_mem": float(self.p_mem) if self.p_mem is not None else None,
             "u_mem": float(self.u_mem) if self.u_mem is not None else None,
-            "c_det": float(self.c_det) if self.c_det is not None else None,
+            "detection_conf_sum": (
+                float(self.detection_conf_sum)
+                if self.detection_conf_sum is not None
+                else None
+            ),
+            "detection_point_count": (
+                int(self.detection_point_count)
+                if self.detection_point_count is not None
+                else None
+            ),
+            "p_det": float(self.p_det) if self.p_det is not None else None,
             "u_det": float(self.u_det) if self.u_det is not None else None,
             "cross_view_resultant_sum": (
                 np.asarray(self.cross_view_resultant_sum).tolist()
@@ -137,7 +163,12 @@ class Object:
             "cross_view_count": (
                 int(self.cross_view_count) if self.cross_view_count is not None else None
             ),
-            "c_view": float(self.c_view) if self.c_view is not None else None,
+            "cross_view_point_count": (
+                int(self.cross_view_point_count)
+                if self.cross_view_point_count is not None
+                else None
+            ),
+            "p_view": float(self.p_view) if self.p_view is not None else None,
             "u_view": float(self.u_view) if self.u_view is not None else None,
             "cross_view_sufficient": (
                 bool(self.cross_view_sufficient)
@@ -167,7 +198,7 @@ class Object:
             self.runner_up_idx = metadata.get("runner_up_idx")
             self.runner_up_cos_sim = metadata.get("runner_up_cos_sim")
             self.semantic_margin = metadata.get("semantic_margin")
-            self.c_sem = metadata.get("c_sem")
+            self.p_sem = metadata.get("p_sem")
             self.u_sem = metadata.get("u_sem")
             self.coherence_prototype_cos_sim = metadata.get(
                 "coherence_prototype_cos_sim"
@@ -177,13 +208,17 @@ class Object:
                 "coherence_runner_up_cos_sim"
             )
             self.label_coherence_margin = metadata.get("label_coherence_margin")
-            self.c_coh = metadata.get("c_coh")
+            self.p_coh = metadata.get("p_coh")
             self.u_coh = metadata.get("u_coh")
             self.vocab_log_partition = metadata.get("vocab_log_partition")
             self.negative_log_partition = metadata.get("negative_log_partition")
-            self.c_mem = metadata.get("c_mem")
+            self.p_mem = metadata.get("p_mem")
             self.u_mem = metadata.get("u_mem")
-            self.c_det = metadata.get("c_det")
+            self.detection_conf_sum = metadata.get("detection_conf_sum")
+            self.detection_point_count = metadata.get("detection_point_count")
+            if self.detection_point_count is not None:
+                self.detection_point_count = int(self.detection_point_count)
+            self.p_det = metadata.get("p_det")
             self.u_det = metadata.get("u_det")
             cross_view_sum = metadata.get("cross_view_resultant_sum", "")
             self.cross_view_resultant_sum = (
@@ -194,7 +229,10 @@ class Object:
             self.cross_view_count = metadata.get("cross_view_count")
             if self.cross_view_count is not None:
                 self.cross_view_count = int(self.cross_view_count)
-            self.c_view = metadata.get("c_view")
+            self.cross_view_point_count = metadata.get("cross_view_point_count")
+            if self.cross_view_point_count is not None:
+                self.cross_view_point_count = int(self.cross_view_point_count)
+            self.p_view = metadata.get("p_view")
             self.u_view = metadata.get("u_view")
             self.cross_view_sufficient = metadata.get("cross_view_sufficient")
 
@@ -203,17 +241,8 @@ class Object:
             Method to add two objects together
             :param other: Object to add to self
         """
-        coherence_fields = (
-            "coherence_prototype_cos_sim",
-            "coherence_runner_up_class",
-            "coherence_runner_up_cos_sim",
-            "label_coherence_margin",
-            "c_coh",
-            "u_coh",
-        )
-
         def invalidate_coherence(target):
-            for field in coherence_fields:
+            for field in COHERENCE_FIELDS:
                 setattr(target, field, None)
 
         if self.pcd.is_empty():
@@ -228,17 +257,33 @@ class Object:
         embedding_norm = np.linalg.norm(self.embedding)
         if embedding_norm > 1e-8:
             self.embedding = self.embedding / embedding_norm
-        c_det_values = [
-            float(c_det)
-            for c_det in (self.c_det, getattr(other, "c_det", None))
-            if c_det is not None
-        ]
-        if c_det_values:
-            self.c_det = float(np.clip(np.mean(c_det_values), 0.0, 1.0))
-            self.u_det = uncertainty_from_confidence(self.c_det)
+
+        # Detection: add the raw point-confidence accumulators, so P_det stays
+        # the pooled mean over the union of both objects' points. Averaging the
+        # two already-averaged P_det values instead would weight a chain of
+        # merges by 1/2, 1/4, 1/8, ... and depend on merge order.
+        detection_sums = (self.detection_conf_sum, getattr(other, "detection_conf_sum", None))
+        detection_counts = (
+            self.detection_point_count,
+            getattr(other, "detection_point_count", None),
+        )
+        if all(value is not None for value in detection_sums + detection_counts):
+            self.detection_conf_sum = float(detection_sums[0]) + float(detection_sums[1])
+            self.detection_point_count = int(detection_counts[0]) + int(detection_counts[1])
+            self.p_det = confidence_from_sum(
+                self.detection_conf_sum, self.detection_point_count
+            )
+            self.u_det = (
+                uncertainty_from_confidence(self.p_det) if self.p_det is not None else None
+            )
         else:
-            self.c_det = None
+            self.detection_conf_sum = None
+            self.detection_point_count = None
+            self.p_det = None
             self.u_det = None
+
+        # Cross-view: sums and counts are additive, so the merged running mean
+        # is exactly the mean over the union of both observation sets.
         cross_view_sums = (
             self.cross_view_resultant_sum,
             getattr(other, "cross_view_resultant_sum", None),
@@ -252,32 +297,40 @@ class Object:
                 cross_view_sums[1]
             )
             self.cross_view_count = int(cross_view_counts[0]) + int(cross_view_counts[1])
+            point_counts = (
+                self.cross_view_point_count,
+                getattr(other, "cross_view_point_count", None),
+            )
+            self.cross_view_point_count = (
+                int(point_counts[0]) + int(point_counts[1])
+                if all(value is not None for value in point_counts)
+                else None
+            )
             min_observations = max(
                 int(getattr(self, "cross_view_consistency_min_observations", 2)),
                 int(getattr(other, "cross_view_consistency_min_observations", 2)),
             )
-            self.c_view, self.u_view, self.cross_view_sufficient = cross_view_values(
+            self.cross_view_consistency_min_observations = min_observations
+            self.p_view, self.u_view, self.cross_view_sufficient = cross_view_values(
                 self.cross_view_resultant_sum,
                 self.cross_view_count,
                 min_observations=min_observations,
+                point_count=self.cross_view_point_count,
             )
         else:
             self.cross_view_resultant_sum = None
             self.cross_view_count = None
-            self.c_view = None
+            self.cross_view_point_count = None
+            self.p_view = None
             self.u_view = None
             self.cross_view_sufficient = None
-        self.label_cos_sim = None
-        self.runner_up_idx = None
-        self.runner_up_cos_sim = None
-        self.semantic_margin = None
-        self.c_sem = None
-        self.u_sem = None
+        # The merged embedding v_i is new, so every signal read off it is stale.
+        # Clearing them makes a missed recomputation visible as an undefined
+        # value rather than as a stale number attributed to the merged object;
+        # Graph.recompute_semantic_uncertainty refills them.
+        for field in SEMANTIC_FIELDS + MEMBERSHIP_FIELDS:
+            setattr(self, field, None)
         invalidate_coherence(self)
-        self.vocab_log_partition = None
-        self.negative_log_partition = None
-        self.c_mem = None
-        self.u_mem = None
         return self
 
     def __str__(self) -> str:

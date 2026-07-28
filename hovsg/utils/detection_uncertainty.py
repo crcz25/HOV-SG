@@ -58,29 +58,48 @@ def finalize_confidence_array(
     return np.asarray(sum_conf, dtype=np.float64) / safe_counter
 
 
-def object_confidence_from_points(
+def object_confidence_sum_from_points(
     full_conf_array: np.ndarray,
     tree_pcd,
     points: np.ndarray,
-    default: float = 0.0,
-) -> float:
-    """Average point-level confidence over one final object point cloud.
+):
+    """Return the point-confidence ``(sum, count)`` for one object point cloud.
 
-    ``default=0.0`` is the conservative direction for objects with no confidence
-    evidence: its complement is ``u_det=1.0``, maximal detection uncertainty.
+    P_det is the mean SAM ``predicted_iou`` over the object's points. Keeping
+    the sum and the count -- rather than only their ratio -- is what makes the
+    aggregation correct under merges: two merged objects add their sums and
+    counts, giving the exact pooled mean over the union of their points,
+    independently of merge order. Averaging two already-averaged means instead
+    weights a chain of merges by 1/2, 1/4, 1/8, ..., which is what the previous
+    implementation did in :meth:`hovsg.graph.object.Object.__add__`.
     """
     points = np.asarray(points)
     if points.size == 0:
-        return _clamp_probability(default, "default")
+        return 0.0, 0
 
     _, idx = tree_pcd.query(points, k=1, workers=-1)
-    values = np.asarray(full_conf_array)[idx]
+    values = np.asarray(full_conf_array)[idx].reshape(-1)
     if values.size == 0:
-        return _clamp_probability(default, "default")
-    return _clamp_probability(np.nan_to_num(values).mean(), "object confidence")
+        return 0.0, 0
+    values = np.clip(np.nan_to_num(values), 0.0, 1.0)
+    return float(values.sum()), int(values.size)
 
 
-def uncertainty_from_confidence(c_det: float) -> float:
+def confidence_from_sum(conf_sum, count, default=None):
+    """Return the pooled mean confidence, or ``default`` without evidence.
+
+    ``default=None`` reports P_det as undefined for an object with no
+    confidence evidence rather than asserting a value for it.
+    """
+    if conf_sum is None or count is None:
+        return default
+    count = int(count)
+    if count <= 0:
+        return default
+    return _clamp_probability(float(conf_sum) / count, "object confidence")
+
+
+def uncertainty_from_confidence(p_det: float) -> float:
     """Return detection uncertainty as the complement of confidence."""
-    c_det = _clamp_probability(c_det, "c_det")
-    return 1.0 - c_det
+    p_det = _clamp_probability(p_det, "p_det")
+    return 1.0 - p_det

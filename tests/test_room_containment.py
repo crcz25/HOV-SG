@@ -134,10 +134,10 @@ def test_different_assigned_classes_do_not_cross_contribute():
 def test_room_propagation_shares_assignment_but_keeps_signal_values_separate():
     room = Room("0_0", "0")
     first = SimpleNamespace(
-        object_id="0_0_0", label_idx=0, c_sem=0.8, c_det=0.6
+        object_id="0_0_0", label_idx=0, p_sem=0.8, p_det=0.6
     )
     second = SimpleNamespace(
-        object_id="0_0_1", label_idx=1, c_sem=0.7, c_det=0.25
+        object_id="0_0_1", label_idx=1, p_sem=0.7, p_det=0.25
     )
     room.objects = [first, second]
     graph = SimpleNamespace(
@@ -155,7 +155,7 @@ def test_room_propagation_shares_assignment_but_keeps_signal_values_separate():
         combined = room.object_beliefs_combined[obj_id]
         assert semantic["class_idx"] == detection["class_idx"] == combined["class_idx"]
         assert semantic["class_name"] == detection["class_name"] == combined["class_name"]
-        assert detection["q"] == pytest.approx(obj.c_det)
+        assert detection["q"] == pytest.approx(obj.p_det)
         assert combined["q"] == pytest.approx(semantic["q"] * detection["q"])
 
     assert set(room.class_containment_beliefs_semantic) == {0, 1}
