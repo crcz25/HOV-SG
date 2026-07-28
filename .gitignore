@@ -12,3 +12,11 @@ __pycache__/
 /checkpoints/*
 !/checkpoints/.gitkeep
 output_*/
+
+# Generated CLIP embedding caches. Rebuilt on demand from the class list
+# (compute_label_feats) and from Open English Wordnet
+# (load_or_build_negative_label_feats), so they are derived data, not source.
+/hovsg/labels/text_feats_*.npy
+/hovsg/labels/negative_label_feats.npy
+/hovsg/labels/negative_label_words.json
+/hovsg/labels/negative_label_metadata.json
