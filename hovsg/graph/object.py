@@ -8,6 +8,7 @@ import numpy as np
 import open3d as o3d
 
 from hovsg.utils.detection_uncertainty import uncertainty_from_confidence
+from hovsg.utils.cross_view_consistency import cross_view_values
 
 
 
@@ -39,6 +40,12 @@ class Object:
         self.u_mem = None
         self.c_det = None
         self.u_det = None
+        self.cross_view_resultant_sum = None
+        self.cross_view_count = None
+        self.c_view = None
+        self.u_view = None
+        self.cross_view_sufficient = None
+        self.cross_view_consistency_min_observations = 2
 
     def set_vertices(self, vertices):
         """
@@ -94,6 +101,21 @@ class Object:
             "u_mem": float(self.u_mem) if self.u_mem is not None else None,
             "c_det": float(self.c_det) if self.c_det is not None else None,
             "u_det": float(self.u_det) if self.u_det is not None else None,
+            "cross_view_resultant_sum": (
+                np.asarray(self.cross_view_resultant_sum).tolist()
+                if self.cross_view_resultant_sum is not None
+                else ""
+            ),
+            "cross_view_count": (
+                int(self.cross_view_count) if self.cross_view_count is not None else None
+            ),
+            "c_view": float(self.c_view) if self.c_view is not None else None,
+            "u_view": float(self.u_view) if self.u_view is not None else None,
+            "cross_view_sufficient": (
+                bool(self.cross_view_sufficient)
+                if self.cross_view_sufficient is not None
+                else None
+            ),
         }
         with open(os.path.join(path, str(self.object_id) + ".json"), "w") as outfile:
             json.dump(metadata, outfile)
@@ -125,6 +147,18 @@ class Object:
             self.u_mem = metadata.get("u_mem")
             self.c_det = metadata.get("c_det")
             self.u_det = metadata.get("u_det")
+            cross_view_sum = metadata.get("cross_view_resultant_sum", "")
+            self.cross_view_resultant_sum = (
+                np.asarray(cross_view_sum, dtype=np.float64)
+                if cross_view_sum is not None and cross_view_sum != ""
+                else None
+            )
+            self.cross_view_count = metadata.get("cross_view_count")
+            if self.cross_view_count is not None:
+                self.cross_view_count = int(self.cross_view_count)
+            self.c_view = metadata.get("c_view")
+            self.u_view = metadata.get("u_view")
+            self.cross_view_sufficient = metadata.get("cross_view_sufficient")
 
     def __add__(self, other):
         """
@@ -152,6 +186,34 @@ class Object:
         else:
             self.c_det = None
             self.u_det = None
+        cross_view_sums = (
+            self.cross_view_resultant_sum,
+            getattr(other, "cross_view_resultant_sum", None),
+        )
+        cross_view_counts = (
+            self.cross_view_count,
+            getattr(other, "cross_view_count", None),
+        )
+        if all(value is not None for value in cross_view_sums + cross_view_counts):
+            self.cross_view_resultant_sum = np.asarray(cross_view_sums[0]) + np.asarray(
+                cross_view_sums[1]
+            )
+            self.cross_view_count = int(cross_view_counts[0]) + int(cross_view_counts[1])
+            min_observations = max(
+                int(getattr(self, "cross_view_consistency_min_observations", 2)),
+                int(getattr(other, "cross_view_consistency_min_observations", 2)),
+            )
+            self.c_view, self.u_view, self.cross_view_sufficient = cross_view_values(
+                self.cross_view_resultant_sum,
+                self.cross_view_count,
+                min_observations=min_observations,
+            )
+        else:
+            self.cross_view_resultant_sum = None
+            self.cross_view_count = None
+            self.c_view = None
+            self.u_view = None
+            self.cross_view_sufficient = None
         self.label_cos_sim = None
         self.runner_up_idx = None
         self.runner_up_cos_sim = None

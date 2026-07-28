@@ -44,6 +44,7 @@ from hovsg.utils.graph_utils import (
     seq_merge,
     pcd_denoise_dbscan,
     feats_denoise_dbscan,
+    feats_denoise_dbscan_with_indices,
     distance_transform,
     map_grid_to_point_cloud,
     compute_room_embeddings,
@@ -66,6 +67,10 @@ from hovsg.utils.detection_uncertainty import (
     mask_predicted_iou,
     object_confidence_from_points,
     uncertainty_from_confidence,
+)
+from hovsg.utils.cross_view_consistency import (
+    accumulate_unit_embeddings,
+    cross_view_values,
 )
 from hovsg.utils.constants import MATTERPORT_GT_LABELS, CLIP_DIM
 from hovsg.utils.llm_utils import (
@@ -108,6 +113,7 @@ class Graph:
         self.label_synonym_mask = None
         self.semantic_uncertainty_logit_scale = None
         self.semantic_uncertainty_synonym_threshold = None
+        self.cross_view_consistency_min_observations = None
         self.negative_text_feats = None
         self.vocab_membership_max_class_similarity = None
         self.vocab_membership_negative_label_count = None
@@ -201,6 +207,10 @@ class Graph:
         sum_features = torch.zeros((n_points, self.clip_feat_dim), device="cpu")
         counter_conf = np.zeros((n_points, 1), dtype=np.float64)
         sum_conf = np.zeros((n_points, 1), dtype=np.float64)
+        cross_view_sum = np.zeros(
+            (n_points, self.clip_feat_dim), dtype=np.float64
+        )
+        cross_view_count = np.zeros((n_points, 1), dtype=np.int64)
 
         # extract features for each frame
         frames_pcd = []
@@ -251,6 +261,12 @@ class Graph:
             dis, idx = tree_pcd.query(np.asarray(pcd.points), k=1, workers=-1)
             sum_features[idx] += F_2D
             counter[idx] += 1
+            accumulate_unit_embeddings(
+                cross_view_sum,
+                cross_view_count,
+                idx,
+                F_2D.numpy(),
+            )
         # compute the average features
         counter[counter == 0] = 1e-5
         sum_features = sum_features / counter
@@ -258,9 +274,11 @@ class Graph:
         self.full_feats_array: np.ndarray
         self.full_conf_array = finalize_confidence_array(sum_conf, counter_conf)
         self.full_conf_array: np.ndarray
+        self.full_cross_view_sum = cross_view_sum
+        self.full_cross_view_count = cross_view_count.reshape(-1)
         
         # free memory
-        del sum_features, counter, sum_conf, counter_conf
+        del sum_features, counter, sum_conf, counter_conf, cross_view_sum, cross_view_count
         torch.cuda.empty_cache() 
 
         # merging the masks
@@ -289,6 +307,8 @@ class Graph:
         # fuse point features in every 3d mask
         masks_feats = []
         masks_confs = []
+        masks_cross_view_sums = []
+        masks_cross_view_counts = []
         for i, mask_3d in tqdm(enumerate(self.mask_pcds), desc="Fusing features"):
             # find the points in the mask
             mask_3d = mask_3d.voxel_down_sample(self.cfg.pipeline.voxel_size * 2)
@@ -304,11 +324,26 @@ class Graph:
                 masks_feats.append(
                     np.zeros((1, self.clip_feat_dim), dtype=self.full_feats_array.dtype)
                 )
+                masks_cross_view_sums.append(
+                    np.zeros(self.clip_feat_dim, dtype=self.full_cross_view_sum.dtype)
+                )
+                masks_cross_view_counts.append(0)
                 continue
-            feats = feats_denoise_dbscan(feats, eps=0.01, min_points=100)
+            feats, selected_indices = feats_denoise_dbscan_with_indices(
+                feats, eps=0.01, min_points=100
+            )
+            selected_point_indices = idx[selected_indices]
+            masks_cross_view_sums.append(
+                np.sum(self.full_cross_view_sum[selected_point_indices], axis=0)
+            )
+            masks_cross_view_counts.append(
+                int(np.sum(self.full_cross_view_count[selected_point_indices]))
+            )
             masks_feats.append(feats)
         self.mask_feats = masks_feats
         self.mask_confs = masks_confs
+        self.mask_cross_view_sums = masks_cross_view_sums
+        self.mask_cross_view_counts = masks_cross_view_counts
         print("number of masks: ", len(self.mask_feats))
         print("number of pcds in hovsg: ", len(self.mask_pcds))
         assert len(self.mask_pcds) == len(self.mask_confs) == len(self.mask_feats)
@@ -665,6 +700,15 @@ class Graph:
         self.semantic_uncertainty_synonym_threshold = float(
             self.cfg.pipeline.semantic_uncertainty_synonym_threshold
         )
+        self.cross_view_consistency_min_observations = int(
+            _pipeline_value(
+                self.cfg.pipeline,
+                "cross_view_consistency_min_observations",
+                2,
+            )
+        )
+        if self.cross_view_consistency_min_observations < 1:
+            raise ValueError("cross_view_consistency_min_observations must be at least 1")
         self.label_synonym_mask = build_synonym_eligibility_mask(
             text_feats, self.semantic_uncertainty_synonym_threshold
         )
@@ -775,6 +819,30 @@ class Graph:
                     object.embedding = object.embedding / embedding_norm
                 object.c_det = float(self.mask_confs[mask_idx])
                 object.u_det = uncertainty_from_confidence(object.c_det)
+                object.cross_view_consistency_min_observations = (
+                    self.cross_view_consistency_min_observations
+                )
+                cross_view_sums = getattr(self, "mask_cross_view_sums", None)
+                cross_view_counts = getattr(self, "mask_cross_view_counts", None)
+                if (
+                    cross_view_sums is not None
+                    and cross_view_counts is not None
+                    and mask_idx < len(cross_view_sums)
+                    and mask_idx < len(cross_view_counts)
+                ):
+                    object.cross_view_resultant_sum = np.asarray(
+                        cross_view_sums[mask_idx], dtype=np.float64
+                    )
+                    object.cross_view_count = int(cross_view_counts[mask_idx])
+                    (
+                        object.c_view,
+                        object.u_view,
+                        object.cross_view_sufficient,
+                    ) = cross_view_values(
+                        object.cross_view_resultant_sum,
+                        object.cross_view_count,
+                        min_observations=self.cross_view_consistency_min_observations,
+                    )
                 name, label_idx, similarity = self.identify_object(
                     object.embedding, text_feats, classes
                 )
@@ -809,6 +877,28 @@ class Graph:
                 object.vertices = np.array(self.mask_pcds[mask_idx].points)[:, [0, 2]]
                 floor.rooms[closest_room_idx].add_object(object)
                 self.objects.append(object)
+
+    def recompute_cross_view_consistency(self):
+        """Refresh derived cross-view values from persisted raw evidence."""
+        min_observations = int(
+            self.cross_view_consistency_min_observations
+            if self.cross_view_consistency_min_observations is not None
+            else 2
+        )
+        for object in self.objects:
+            resultant_sum = getattr(object, "cross_view_resultant_sum", None)
+            count = getattr(object, "cross_view_count", None)
+            if resultant_sum is None or count is None:
+                object.c_view = None
+                object.u_view = None
+                object.cross_view_sufficient = None
+                continue
+            object.cross_view_consistency_min_observations = min_observations
+            object.c_view, object.u_view, object.cross_view_sufficient = cross_view_values(
+                resultant_sum,
+                count,
+                min_observations=min_observations,
+            )
 
     def recompute_semantic_uncertainty(self):
         """Refresh object margin uncertainty after embeddings have been merged."""
@@ -1058,6 +1148,7 @@ class Graph:
             # view aligned so the final uncertainty pass sees only final objects.
             self.objects = [object for room in self.rooms for object in room.objects]
 
+        self.recompute_cross_view_consistency()
         self.recompute_semantic_uncertainty()
 
         print("creating graph...")

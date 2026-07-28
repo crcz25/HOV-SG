@@ -391,39 +391,36 @@ def feats_denoise_dbscan(feats, eps=0.02, min_points=2):
         :param min_points: The number of samples in a neighborhood for a point to be considered as a core point.
         :return: Denoised features.
     """
-    # Convert to numpy arrays
+    denoised, _ = feats_denoise_dbscan_with_indices(
+        feats, eps=eps, min_points=min_points
+    )
+    return denoised
+
+
+def feats_denoise_dbscan_with_indices(feats, eps=0.02, min_points=2):
+    """Denoise features and return the source rows used for the result."""
     feats = np.array(feats)
-    # Create DBSCAN object
     clustering = DBSCAN(eps=eps, min_samples=min_points, metric="cosine").fit(feats)
-
-    # Get the labels
     labels = clustering.labels_
-
-    # Count all labels in the cluster
     counter = Counter(labels)
-
-    # Remove the noise label
-    if counter and (-1 in counter):
+    if counter and -1 in counter:
         del counter[-1]
 
     if counter:
-        # Find the label of the largest cluster
         most_common_label, _ = counter.most_common(1)[0]
-        # Create mask for points in the largest cluster
-        largest_mask = labels == most_common_label
-        # Apply mask
-        largest_cluster_feats = feats[largest_mask]
-        feats = largest_cluster_feats
-        # take the feature with the highest similarity to the mean of the cluster
-        if len(feats) > 1:
-            mean_feats = np.mean(largest_cluster_feats, axis=0)
-            # similarity = np.dot(largest_cluster_feats, mean_feats)
-            # max_idx = np.argmax(similarity)
-            # feats = feats[max_idx]
-            feats = mean_feats
+        selected_indices = np.flatnonzero(labels == most_common_label)
     else:
-        feats = np.mean(feats, axis=0)
-    return feats
+        selected_indices = np.arange(len(feats), dtype=np.int64)
+
+    selected_feats = feats[selected_indices]
+    if counter:
+        # Preserve the original function's shape for a one-row selected
+        # cluster; normal multi-point clusters are reduced to their mean.
+        if len(selected_feats) > 1:
+            selected_feats = np.mean(selected_feats, axis=0)
+    else:
+        selected_feats = np.mean(feats, axis=0)
+    return selected_feats, selected_indices
 
 
 def pcd_denoise_dbscan(pcd: o3d.geometry.PointCloud, eps=0.02, min_points=10):
@@ -621,4 +618,3 @@ def seq_merge(frames_pcd, th, down_size, proxy_th):
         global_masks, overlap_threshold=th, radius=down_size, iou_thresh=proxy_th
     )
     return global_masks
-
