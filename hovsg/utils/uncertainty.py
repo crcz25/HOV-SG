@@ -9,6 +9,11 @@ from scipy.special import expit, logsumexp
 _NORM_EPSILON = 1e-8
 
 
+def _sigmoid_margin_confidence(margin, logit_scale):
+    """Convert a cosine margin using the shared uncertainty logit scale."""
+    return float(expit(float(logit_scale) * float(margin)))
+
+
 def compute_cosine_similarities(embedding, text_feats):
     """Compute cosine similarities from one visual feature to text features.
 
@@ -133,7 +138,7 @@ def compute_semantic_margin_uncertainty(
     runner_up_idx = int(candidates[np.argmax(similarities[candidates])])
     runner_up_cos_sim = float(similarities[runner_up_idx])
     semantic_margin = float(label_cos_sim - runner_up_cos_sim)
-    c_sem = float(expit(float(logit_scale) * semantic_margin))
+    c_sem = _sigmoid_margin_confidence(semantic_margin, logit_scale)
     return {
         "label_cos_sim": label_cos_sim,
         "runner_up_idx": runner_up_idx,
@@ -141,6 +146,120 @@ def compute_semantic_margin_uncertainty(
         "semantic_margin": semantic_margin,
         "c_sem": c_sem,
         "u_sem": float(1.0 - c_sem),
+    }
+
+
+def compute_label_coherence_uncertainty(
+    embedding,
+    label_idx,
+    class_embedding_sum,
+    class_count,
+    class_prototype_full,
+    eligibility_mask,
+    label_classes=None,
+    logit_scale=100.0,
+):
+    """Compute the leave-one-out, visual-only class-coherence margin.
+
+    The class sums and prototypes are supplied by the caller so they can be
+    built once for the complete, post-merge object set.  Text features are
+    deliberately absent from this function: ``eligibility_mask`` is derived
+    from the already-cached text vocabulary and is used only to remove
+    near-synonym competitor classes.  Label Coherence and Semantic
+    Uncertainty estimate the same labeling-error event; they must not be
+    multiplied together as independent factors by this signal.
+    """
+    fields = (
+        "coherence_prototype_cos_sim",
+        "coherence_runner_up_class",
+        "coherence_runner_up_cos_sim",
+        "label_coherence_margin",
+        "c_coh",
+        "u_coh",
+    )
+    undefined = {field: None for field in fields}
+
+    try:
+        label_idx = int(label_idx)
+    except (TypeError, ValueError):
+        return undefined
+
+    embedding = np.asarray(embedding, dtype=np.float64).reshape(-1)
+    embedding_norm = np.linalg.norm(embedding)
+    if not np.isfinite(embedding_norm) or embedding_norm < _NORM_EPSILON:
+        return undefined
+    normalized_embedding = embedding / embedding_norm
+
+    count = int(class_count.get(label_idx, 0))
+    if count < 2 or label_idx not in class_embedding_sum:
+        return undefined
+
+    leave_one_out_sum = (
+        np.asarray(class_embedding_sum[label_idx], dtype=np.float64).reshape(-1)
+        - normalized_embedding
+    )
+    leave_one_out_norm = np.linalg.norm(leave_one_out_sum)
+    if (
+        not np.isfinite(leave_one_out_norm)
+        or leave_one_out_norm < _NORM_EPSILON
+    ):
+        return undefined
+    self_prototype = leave_one_out_sum / leave_one_out_norm
+    self_cos_sim = float(np.dot(normalized_embedding, self_prototype))
+
+    eligibility_mask = np.asarray(eligibility_mask, dtype=bool)
+    if label_idx < 0 or label_idx >= eligibility_mask.shape[0]:
+        return undefined
+    instantiated_classes = sorted(
+        int(class_idx)
+        for class_idx in class_prototype_full
+        if int(class_idx) != label_idx
+    )
+    eligible_classes = [
+        class_idx
+        for class_idx in instantiated_classes
+        if class_idx < eligibility_mask.shape[1]
+        and eligibility_mask[label_idx, class_idx]
+    ]
+    if not eligible_classes:
+        if instantiated_classes:
+            logging.getLogger(__name__).warning(
+                "No eligible distinct visual competitor for label_idx=%d; "
+                "Label Coherence is undefined because all competitors are "
+                "excluded as synonyms",
+                label_idx,
+            )
+        return undefined
+
+    competitor_similarities = np.asarray(
+        [
+            np.dot(
+                normalized_embedding,
+                np.asarray(class_prototype_full[class_idx], dtype=np.float64),
+            )
+            for class_idx in eligible_classes
+        ],
+        dtype=np.float64,
+    )
+    if not np.all(np.isfinite(competitor_similarities)):
+        return undefined
+    runner_up_position = int(np.argmax(competitor_similarities))
+    runner_up_idx = eligible_classes[runner_up_position]
+    runner_up_cos_sim = float(competitor_similarities[runner_up_position])
+    runner_up_class = (
+        label_classes[runner_up_idx]
+        if label_classes is not None and runner_up_idx < len(label_classes)
+        else runner_up_idx
+    )
+    margin = float(self_cos_sim - runner_up_cos_sim)
+    confidence = _sigmoid_margin_confidence(margin, logit_scale)
+    return {
+        "coherence_prototype_cos_sim": self_cos_sim,
+        "coherence_runner_up_class": runner_up_class,
+        "coherence_runner_up_cos_sim": runner_up_cos_sim,
+        "label_coherence_margin": margin,
+        "c_coh": confidence,
+        "u_coh": float(1.0 - confidence),
     }
 
 

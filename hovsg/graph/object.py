@@ -34,6 +34,12 @@ class Object:
         self.semantic_margin = None
         self.c_sem = None
         self.u_sem = None
+        self.coherence_prototype_cos_sim = None
+        self.coherence_runner_up_class = None
+        self.coherence_runner_up_cos_sim = None
+        self.label_coherence_margin = None
+        self.c_coh = None
+        self.u_coh = None
         self.vocab_log_partition = None
         self.negative_log_partition = None
         self.c_mem = None
@@ -87,6 +93,28 @@ class Object:
             ),
             "c_sem": float(self.c_sem) if self.c_sem is not None else None,
             "u_sem": float(self.u_sem) if self.u_sem is not None else None,
+            "coherence_prototype_cos_sim": (
+                float(self.coherence_prototype_cos_sim)
+                if self.coherence_prototype_cos_sim is not None
+                else None
+            ),
+            "coherence_runner_up_class": (
+                int(self.coherence_runner_up_class)
+                if isinstance(self.coherence_runner_up_class, (int, np.integer))
+                else self.coherence_runner_up_class
+            ),
+            "coherence_runner_up_cos_sim": (
+                float(self.coherence_runner_up_cos_sim)
+                if self.coherence_runner_up_cos_sim is not None
+                else None
+            ),
+            "label_coherence_margin": (
+                float(self.label_coherence_margin)
+                if self.label_coherence_margin is not None
+                else None
+            ),
+            "c_coh": float(self.c_coh) if self.c_coh is not None else None,
+            "u_coh": float(self.u_coh) if self.u_coh is not None else None,
             "vocab_log_partition": (
                 float(self.vocab_log_partition)
                 if self.vocab_log_partition is not None
@@ -141,6 +169,16 @@ class Object:
             self.semantic_margin = metadata.get("semantic_margin")
             self.c_sem = metadata.get("c_sem")
             self.u_sem = metadata.get("u_sem")
+            self.coherence_prototype_cos_sim = metadata.get(
+                "coherence_prototype_cos_sim"
+            )
+            self.coherence_runner_up_class = metadata.get("coherence_runner_up_class")
+            self.coherence_runner_up_cos_sim = metadata.get(
+                "coherence_runner_up_cos_sim"
+            )
+            self.label_coherence_margin = metadata.get("label_coherence_margin")
+            self.c_coh = metadata.get("c_coh")
+            self.u_coh = metadata.get("u_coh")
             self.vocab_log_partition = metadata.get("vocab_log_partition")
             self.negative_log_partition = metadata.get("negative_log_partition")
             self.c_mem = metadata.get("c_mem")
@@ -165,9 +203,24 @@ class Object:
             Method to add two objects together
             :param other: Object to add to self
         """
+        coherence_fields = (
+            "coherence_prototype_cos_sim",
+            "coherence_runner_up_class",
+            "coherence_runner_up_cos_sim",
+            "label_coherence_margin",
+            "c_coh",
+            "u_coh",
+        )
+
+        def invalidate_coherence(target):
+            for field in coherence_fields:
+                setattr(target, field, None)
+
         if self.pcd.is_empty():
+            invalidate_coherence(other)
             return other
         if other.pcd.is_empty():
+            invalidate_coherence(self)
             return self
         self.pcd += other.pcd
         self.vertices = self.pcd.get_axis_aligned_bounding_box().get_box_points()
@@ -220,6 +273,7 @@ class Object:
         self.semantic_margin = None
         self.c_sem = None
         self.u_sem = None
+        invalidate_coherence(self)
         self.vocab_log_partition = None
         self.negative_log_partition = None
         self.c_mem = None

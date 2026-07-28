@@ -44,6 +44,10 @@ pipeline:
   semantic_uncertainty_logit_scale: 100.0
   # Calibrated against cached HM3D text embeddings; excludes the named synonym pairs.
   semantic_uncertainty_synonym_threshold: 0.75
+  # Deliberately independent copies of the semantic convention; changing the
+  # semantic values above must not silently change Label Coherence.
+  label_coherence_logit_scale: 100.0
+  label_coherence_synonym_threshold: 0.9
   cross_view_consistency_min_observations: 2
   vocab_membership_max_class_similarity: 0.5
   vocab_membership_negative_label_count: null

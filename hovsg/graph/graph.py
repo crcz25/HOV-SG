@@ -58,6 +58,7 @@ from hovsg.utils.negative_labels import load_or_build_negative_label_feats
 from hovsg.utils.uncertainty import (
     build_synonym_eligibility_mask,
     compute_cosine_similarities,
+    compute_label_coherence_uncertainty,
     compute_semantic_margin_uncertainty,
     compute_vocabulary_membership,
 )
@@ -113,6 +114,11 @@ class Graph:
         self.label_synonym_mask = None
         self.semantic_uncertainty_logit_scale = None
         self.semantic_uncertainty_synonym_threshold = None
+        self.label_coherence_logit_scale = None
+        self.label_coherence_synonym_threshold = None
+        self.class_embedding_sum = {}
+        self.class_count = {}
+        self.class_prototype_full = {}
         self.cross_view_consistency_min_observations = None
         self.negative_text_feats = None
         self.vocab_membership_max_class_similarity = None
@@ -700,6 +706,17 @@ class Graph:
         self.semantic_uncertainty_synonym_threshold = float(
             self.cfg.pipeline.semantic_uncertainty_synonym_threshold
         )
+        # These currently mirror the semantic signal's convention, not its
+        # config value. Keep them independently overridable so a future change
+        # to semantic uncertainty does not silently change Label Coherence.
+        self.label_coherence_logit_scale = float(
+            _pipeline_value(self.cfg.pipeline, "label_coherence_logit_scale", 100.0)
+        )
+        self.label_coherence_synonym_threshold = float(
+            _pipeline_value(
+                self.cfg.pipeline, "label_coherence_synonym_threshold", 0.9
+            )
+        )
         self.cross_view_consistency_min_observations = int(
             _pipeline_value(
                 self.cfg.pipeline,
@@ -966,6 +983,103 @@ class Graph:
                 similarity=similarity,
             )
             for field, value in membership_values.items():
+                setattr(object, field, value)
+
+        # Label Coherence is a companion estimator of the same labeling-error
+        # event as Semantic Uncertainty. It is intentionally kept separate;
+        # downstream fusion must not treat the two signals as independent
+        # factors.
+        # Call through Graph so lightweight test/config stand-ins that invoke
+        # this method unbound do not need to provide a bound helper method.
+        Graph.recompute_label_coherence(self)
+
+    def recompute_label_coherence(self):
+        """Refresh visual class-prototype margins after all object merges."""
+        if self.label_text_feats is None or self.label_classes is None:
+            raise RuntimeError(
+                "Object label features and classes must be loaded before "
+                "recomputing Label Coherence"
+            )
+
+        text_feats = np.asarray(self.label_text_feats, dtype=np.float64)
+        threshold = getattr(self, "label_coherence_synonym_threshold", None)
+        if threshold is None:
+            threshold = _pipeline_value(
+                self.cfg.pipeline, "label_coherence_synonym_threshold", 0.9
+            )
+        logit_scale = getattr(self, "label_coherence_logit_scale", None)
+        if logit_scale is None:
+            logit_scale = _pipeline_value(
+                self.cfg.pipeline, "label_coherence_logit_scale", 100.0
+            )
+        threshold = float(threshold)
+        logit_scale = float(logit_scale)
+
+        # Build the synonym mask once from the same cached vocabulary used by
+        # Semantic Uncertainty. This does not invoke the text encoder.
+        coherence_synonym_mask = build_synonym_eligibility_mask(text_feats, threshold)
+        self.class_embedding_sum = {}
+        self.class_count = {}
+        self.class_prototype_full = {}
+
+        normalized_embeddings = {}
+        for object in self.objects:
+            coherence_fields = (
+                "coherence_prototype_cos_sim",
+                "coherence_runner_up_class",
+                "coherence_runner_up_cos_sim",
+                "label_coherence_margin",
+                "c_coh",
+                "u_coh",
+            )
+            for field in coherence_fields:
+                setattr(object, field, None)
+            embedding = getattr(object, "embedding", None)
+            if embedding is None or getattr(object, "label_idx", None) is None:
+                continue
+            try:
+                embedding = np.asarray(embedding, dtype=np.float64).reshape(-1)
+                norm = np.linalg.norm(embedding)
+                label_idx = int(object.label_idx)
+            except (TypeError, ValueError, OverflowError):
+                continue
+            if (
+                not np.isfinite(norm)
+                or norm < 1e-8
+                or label_idx < 0
+                or label_idx >= text_feats.shape[0]
+            ):
+                continue
+            normalized_embedding = embedding / norm
+            normalized_embeddings[id(object)] = normalized_embedding
+            self.class_embedding_sum[label_idx] = (
+                self.class_embedding_sum.get(label_idx, np.zeros_like(normalized_embedding))
+                + normalized_embedding
+            )
+            self.class_count[label_idx] = self.class_count.get(label_idx, 0) + 1
+
+        for class_idx, embedding_sum in self.class_embedding_sum.items():
+            count = self.class_count[class_idx]
+            prototype = np.asarray(embedding_sum, dtype=np.float64) / count
+            norm = np.linalg.norm(prototype)
+            if np.isfinite(norm) and norm >= 1e-8:
+                self.class_prototype_full[class_idx] = prototype / norm
+
+        for object in self.objects:
+            normalized_embedding = normalized_embeddings.get(id(object))
+            if normalized_embedding is None:
+                continue
+            values = compute_label_coherence_uncertainty(
+                normalized_embedding,
+                object.label_idx,
+                self.class_embedding_sum,
+                self.class_count,
+                self.class_prototype_full,
+                coherence_synonym_mask,
+                label_classes=self.label_classes,
+                logit_scale=logit_scale,
+            )
+            for field, value in values.items():
                 setattr(object, field, value)
 
     def propagate_semantic_uncertainty_to_rooms(self):
