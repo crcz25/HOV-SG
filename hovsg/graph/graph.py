@@ -63,6 +63,7 @@ from hovsg.utils.uncertainty import (
     build_synonym_eligibility_mask,
     compute_cosine_similarities,
     compute_label_coherence_uncertainty,
+    compute_object_probability,
     compute_semantic_margin_uncertainty,
     compute_vocabulary_membership,
     normalize_rows,
@@ -128,6 +129,10 @@ class Graph:
         self.class_count = {}
         self.class_prototype_full = {}
         self.cross_view_consistency_min_observations = None
+        # This pipeline retains per-object cross-view evidence and computes
+        # p_view from it.  The explicit flag lets the fusion helper distinguish
+        # structural absence from an individual object's undefined p_view.
+        self.cross_view_consistency_implemented = True
         self.negative_text_feats = None
         self.vocab_membership_max_class_similarity = None
         self.vocab_membership_negative_label_count = None
@@ -1043,6 +1048,9 @@ class Graph:
         # Call through Graph so lightweight test/config stand-ins that invoke
         # this method unbound do not need to provide a bound helper method.
         Graph.recompute_label_coherence(self)
+        # This is the final pass: label coherence is a whole-graph signal and
+        # must be fresh before p_obj/u_obj are derived.
+        Graph.recompute_object_probability(self)
 
     def recompute_label_coherence(self):
         """Refresh visual class-prototype margins after all object merges."""
@@ -1129,6 +1137,27 @@ class Graph:
             )
             for field, value in values.items():
                 setattr(object, field, value)
+
+        # Keep direct callers of this whole-graph recompute from observing a
+        # stale fused object probability.
+        Graph.recompute_object_probability(self)
+
+    def recompute_object_probability(self):
+        """Refresh the fused object probability from all current inputs."""
+        cross_view_implemented = bool(
+            getattr(self, "cross_view_consistency_implemented", True)
+        )
+        for object in self.objects:
+            probability = compute_object_probability(
+                getattr(object, "p_det", None),
+                getattr(object, "p_view", None),
+                getattr(object, "p_mem", None),
+                getattr(object, "p_sem", None),
+                getattr(object, "p_coh", None),
+                cross_view_implemented=cross_view_implemented,
+            )
+            object.p_obj = probability
+            object.u_obj = 1.0 - probability if probability is not None else None
 
     def propagate_semantic_uncertainty_to_rooms(self):
         """Compute semantic, detection, and combined room beliefs."""

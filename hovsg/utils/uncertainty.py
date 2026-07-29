@@ -1,6 +1,7 @@
 """Side-effect-free utilities for semantic and containment uncertainty."""
 
 import logging
+from typing import Optional
 
 import numpy as np
 from scipy.special import expit, logsumexp
@@ -35,6 +36,39 @@ COHERENCE_FIELDS = (
     "p_coh",
     "u_coh",
 )
+
+# The fused object-level probability is kept as a probability/uncertainty
+# pair, like each of its five input signals.
+OBJECT_FIELDS = ("p_obj", "u_obj")
+
+
+def compute_object_probability(
+    p_det: Optional[float],
+    p_view: Optional[float],
+    p_mem: Optional[float],
+    p_sem: Optional[float],
+    p_coh: Optional[float],
+    cross_view_implemented: bool,
+) -> Optional[float]:
+    """Fuse the object-level probability from the five signal providers.
+
+    ``p_sem`` and ``p_coh`` estimate the same label-error event from
+    different references, so the more conservative defined value is used.
+    Missing required evidence propagates as ``None``.  The only neutral-value
+    reduction is structural absence of the cross-view provider, where its
+    factor is omitted from the product.
+    """
+    required = (p_det, p_mem, p_sem)
+    if any(value is None for value in required):
+        return None
+    if cross_view_implemented and p_view is None:
+        return None
+
+    semantic_factor = p_sem if p_coh is None else min(p_sem, p_coh)
+    factors = [p_det, p_mem, semantic_factor]
+    if cross_view_implemented:
+        factors.append(p_view)
+    return float(np.prod(np.asarray(factors, dtype=np.float64)))
 
 
 def _sigmoid_margin_confidence(margin, logit_scale):

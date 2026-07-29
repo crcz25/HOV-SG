@@ -31,6 +31,7 @@ from hovsg.utils.detection_uncertainty import (
 from hovsg.utils.uncertainty import (
     COHERENCE_FIELDS,
     MEMBERSHIP_FIELDS,
+    OBJECT_FIELDS,
     SEMANTIC_FIELDS,
     build_synonym_eligibility_mask,
     normalize_rows,
@@ -41,6 +42,7 @@ ALL_SIGNAL_FIELDS = (
     SEMANTIC_FIELDS
     + MEMBERSHIP_FIELDS
     + COHERENCE_FIELDS
+    + OBJECT_FIELDS
     + ("p_det", "u_det", "p_view", "u_view")
 )
 
@@ -249,6 +251,10 @@ def test_coherence_is_computed_only_after_the_full_object_set_exists(synthetic_g
 
     Graph.recompute_semantic_uncertainty(graph)
 
+    for obj in graph.objects:
+        assert obj.p_obj is not None
+        assert obj.u_obj == pytest.approx(1.0 - obj.p_obj)
+
     # Objects 0 and 1 share class 0, so each is scored against the other.
     class_zero = [obj for obj in graph.objects if obj.label_idx == 0]
     assert len(class_zero) == 2
@@ -406,6 +412,8 @@ def test_graph_recompute_restores_signals_after_a_merge(synthetic_graph):
     assert merged.p_sem is not None
     assert merged.p_mem is not None
     assert merged.p_view is not None
+    assert merged.p_obj is not None
+    assert merged.u_obj == pytest.approx(1.0 - merged.p_obj)
     # Both surviving classes are singletons now, so coherence is undefined.
     assert merged.p_coh is None
 
@@ -416,7 +424,7 @@ def test_confidence_and_uncertainty_are_complements_everywhere(synthetic_graph):
     Graph.recompute_semantic_uncertainty(graph)
 
     for obj in graph.objects:
-        for signal in ("sem", "mem", "coh", "det", "view"):
+        for signal in ("sem", "mem", "coh", "det", "view", "obj"):
             confidence = getattr(obj, f"p_{signal}")
             uncertainty = getattr(obj, f"u_{signal}")
             if confidence is None:
@@ -427,7 +435,7 @@ def test_confidence_and_uncertainty_are_complements_everywhere(synthetic_graph):
 
 
 def test_signals_are_not_fused_into_a_single_score(synthetic_graph):
-    """The five signals stay separate fields; nothing multiplies them."""
+    """The five source signals stay separate beside the explicit fused score."""
     graph, _, _ = synthetic_graph
     Graph.segment_objects(graph)
     Graph.recompute_semantic_uncertainty(graph)

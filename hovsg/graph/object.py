@@ -15,6 +15,7 @@ from hovsg.utils.cross_view_consistency import cross_view_values
 from hovsg.utils.uncertainty import (
     COHERENCE_FIELDS,
     MEMBERSHIP_FIELDS,
+    OBJECT_FIELDS,
     SEMANTIC_FIELDS,
 )
 
@@ -68,6 +69,8 @@ class Object:
         self.u_view = None
         self.cross_view_sufficient = None
         self.cross_view_consistency_min_observations = 2
+        self.p_obj = None
+        self.u_obj = None
 
     def set_vertices(self, vertices):
         """
@@ -175,6 +178,8 @@ class Object:
                 if self.cross_view_sufficient is not None
                 else None
             ),
+            "p_obj": float(self.p_obj) if self.p_obj is not None else None,
+            "u_obj": float(self.u_obj) if self.u_obj is not None else None,
         }
         with open(os.path.join(path, str(self.object_id) + ".json"), "w") as outfile:
             json.dump(metadata, outfile)
@@ -235,6 +240,8 @@ class Object:
             self.p_view = metadata.get("p_view")
             self.u_view = metadata.get("u_view")
             self.cross_view_sufficient = metadata.get("cross_view_sufficient")
+            self.p_obj = metadata.get("p_obj")
+            self.u_obj = metadata.get("u_obj")
 
     def __add__(self, other):
         """
@@ -245,11 +252,17 @@ class Object:
             for field in COHERENCE_FIELDS:
                 setattr(target, field, None)
 
+        def invalidate_object_probability(target):
+            for field in OBJECT_FIELDS:
+                setattr(target, field, None)
+
         if self.pcd.is_empty():
             invalidate_coherence(other)
+            invalidate_object_probability(other)
             return other
         if other.pcd.is_empty():
             invalidate_coherence(self)
+            invalidate_object_probability(self)
             return self
         self.pcd += other.pcd
         self.vertices = self.pcd.get_axis_aligned_bounding_box().get_box_points()
@@ -331,6 +344,7 @@ class Object:
         for field in SEMANTIC_FIELDS + MEMBERSHIP_FIELDS:
             setattr(self, field, None)
         invalidate_coherence(self)
+        invalidate_object_probability(self)
         return self
 
     def __str__(self) -> str:
