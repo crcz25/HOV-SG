@@ -139,7 +139,7 @@ dataset frame (RGB, depth, pose)
 | `Graph.recompute_cross_view_consistency` | `hovsg/graph/graph.py:992` | Re-derives `p_view` from persisted raw evidence |
 | `Graph.recompute_semantic_uncertainty` | `hovsg/graph/graph.py:1015` | Post-merge refresh; delegates to coherence |
 | `Graph.recompute_label_coherence` | `hovsg/graph/graph.py:1047` | Rebuilds visual prototypes and scores every object |
-| `Graph.propagate_semantic_uncertainty_to_rooms` | `hovsg/graph/graph.py:1133` | Room-level noisy-OR; skips objects with undefined signals |
+| `Graph.propagate_semantic_uncertainty_to_rooms` | `hovsg/graph/graph.py:1166` | Room-level duplicate-aware noisy-OR over fused `p_obj`; skips undefined probabilities |
 | `Object.__add__` | `hovsg/graph/object.py:239` | Merge: adds raw accumulators, clears embedding-derived signals |
 | `Object.save` / `Object.load` | `hovsg/graph/object.py:79` / `:182` | JSON round-trip of raw evidence **and** derived values |
 
@@ -466,16 +466,13 @@ top-ranked recommendation in §7.
 Visual prototypes, leave-one-out exclusion, τ-gated competitors over instantiated classes
 only, same α and σ, and explicit undefined handling — all verified numerically.
 
-### Signal combination — **Not applicable (no fusion exists)**
+### Signal combination — **Implemented**
 
-The five signals are stored as five independent field pairs. Nothing multiplies or
-averages them into a single object-level score. The one place where two signals are
-combined is **room-level** containment
-(`propagate_semantic_uncertainty_to_rooms`, `graph.py:1133`), which forms
-`q = P_sem · P_det` per object before a noisy-OR across objects. That product pairs a
-labelling-error signal with a false-positive signal — two distinct error events — so it is
-theoretically defensible, unlike a `P_sem · P_coh` product would be. It is a pre-existing
-room-level component, documented here rather than changed.
+`Graph.recompute_object_probability` computes the fused object probability `p_obj` from
+the current detection, cross-view, vocabulary-membership, semantic, and coherence
+signals. Room propagation reads only this authoritative fused value. It groups objects
+by their assigned label, merges connected spatial near-duplicate components, uses the
+maximum `p_obj` per component, and applies noisy-OR plus its fully-correlated limit.
 
 ---
 
@@ -591,8 +588,8 @@ after mutating objects outside `build_graph`. *Recommendation:* the current miti
 belt-and-braces.
 
 **8 — Undefined-signal handling downstream.** `propagate_semantic_uncertainty_to_rooms`
-now skips objects with undefined `P_sem`/`P_det` (with a warning) instead of raising. A
-scene where many objects are undefined would silently produce weaker room beliefs.
+skips objects with `p_obj is None`, and excludes classes whose every assigned object is
+undefined. Spatial duplicates are merged as connected components before noisy-OR.
 *Recommendation:* surface the skip count in the pipeline summary.
 
 **9 — Calibration evaluation requires data not present here.** Measuring whether α = 100

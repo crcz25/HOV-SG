@@ -74,3 +74,4 @@ pipeline:
   # the labels furthest from every class. null keeps the whole bank.
   vocab_membership_negative_label_count: null
   merge_objects_graph: false
+  room_belief_merge_threshold: 0.5

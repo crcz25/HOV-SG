@@ -1,21 +1,10 @@
-# Room-level uncertainty propagation
+# Room-level fused-probability propagation
 
-Room containment beliefs use the two object-level signals already computed by
-the scene-graph builder:
+`Graph.propagate_semantic_uncertainty_to_rooms()` groups assigned objects by
+`label_idx`, skips objects whose fused `p_obj` is undefined, merges connected
+near-duplicate components using the existing symmetric point-cloud overlap
+metric, and represents each component by its maximum `p_obj`.
 
-- semantic confidence `c_sem` and semantic uncertainty `u_sem`;
-- detection confidence `c_det` and detection uncertainty `u_det`.
-
-`Graph.propagate_semantic_uncertainty_to_rooms()` keeps the assigned
-`label_idx` fixed and stores `c_sem`, `c_det`, and their product in the room's
-semantic, detection, and combined object-belief maps. `Room` fuses each map
-with a noisy-OR operation by class index.
-
-Every object must have `label_idx`, `c_sem`, and `c_det` before propagation.
-The method does not infer missing labels, inspect legacy confidence aliases, or
-reconstruct a vocabulary-wide score. The object fields remain the authoritative
-uncertainty values and are persisted by `Object.save()`.
-
-The implementation is intentionally independent of graph construction and
-navigation-graph code. Tests cover empty rooms, independent signal changes,
-combined confidence, persistence, and monotonic noisy-OR fusion.
+Each room stores a noisy-OR `class_containment_belief` and its
+fully-correlated lower bound in `class_containment_belief_correlated_limit`.
+The merge threshold is configured by `pipeline.room_belief_merge_threshold`.

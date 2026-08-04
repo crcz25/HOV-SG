@@ -1,217 +1,119 @@
+from types import SimpleNamespace
+
 import numpy as np
 import pytest
-from types import SimpleNamespace
 
 from hovsg.graph.graph import Graph
 from hovsg.graph.room import Room
-from hovsg.utils.uncertainty import compute_room_containment_probs
 
 
-def test_empty_room_equals_prior():
-    result = compute_room_containment_probs(np.empty((0, 3)), prior=0.05)
-
-    np.testing.assert_allclose(result, np.full(3, 0.05))
-
-
-def test_one_object_equals_its_compatibility_without_prior():
-    result = compute_room_containment_probs(np.array([[0.8]]), prior=0.0)
-
-    assert result[0] == pytest.approx(0.8)
-
-
-def test_two_objects_follow_noisy_or():
-    result = compute_room_containment_probs(
-        np.array([[0.5], [0.4]]),
-        prior=0.0,
+def make_object(object_id, label_idx, probability, minimum, maximum):
+    vertices = np.array(
+        [
+            [x, y, z]
+            for x in (minimum[0], maximum[0])
+            for y in (minimum[1], maximum[1])
+            for z in (minimum[2], maximum[2])
+        ],
+        dtype=np.float64,
+    )
+    return SimpleNamespace(
+        object_id=object_id,
+        label_idx=label_idx,
+        p_obj=probability,
+        vertices=vertices,
+        pcd=None,
     )
 
-    assert result[0] == pytest.approx(0.7)
 
-
-def test_detection_reliability_scales_object_contribution():
-    result = compute_room_containment_probs(
-        np.array([[0.8]]),
-        detection_reliabilities=[0.25],
-        prior=0.0,
-    )
-
-    assert result[0] == pytest.approx(0.2)
-
-
-def test_more_support_is_monotonic():
-    one_object = compute_room_containment_probs(np.array([[0.5, 0.1]]))
-    two_objects = compute_room_containment_probs(
-        np.array([[0.5, 0.1], [0.4, 0.2]])
-    )
-
-    assert np.all(two_objects >= one_object)
-
-
-def test_lower_reliability_cannot_increase_belief():
-    high_reliability = compute_room_containment_probs(
-        np.array([[0.8, 0.2]]), detection_reliabilities=[1.0]
-    )
-    low_reliability = compute_room_containment_probs(
-        np.array([[0.8, 0.2]]), detection_reliabilities=[0.25]
-    )
-
-    assert np.all(low_reliability <= high_reliability)
-
-
-def test_empty_room_has_empty_three_signal_beliefs():
+def test_noisy_or_and_correlated_limit():
     room = Room("0_0", "0")
+    room.objects = [
+        make_object("a", 2, 0.5, (0, 0, 0), (1, 1, 1)),
+        make_object("b", 2, 0.4, (2, 0, 0), (3, 1, 1)),
+    ]
 
-    room.compute_class_containment_beliefs()
+    room.compute_fused_class_containment_beliefs(merge_threshold=0.5)
 
-    assert room.object_beliefs_semantic == {}
-    assert room.object_beliefs_detection == {}
-    assert room.object_beliefs_combined == {}
-    assert room.class_containment_beliefs_semantic == {}
-    assert room.class_containment_beliefs_detection == {}
-    assert room.class_containment_beliefs_combined == {}
+    assert room.class_containment_belief[2] == pytest.approx(0.7)
+    assert room.class_containment_belief_correlated_limit[2] == pytest.approx(0.5)
 
 
-def test_one_object_reduces_to_each_signal_q():
+def test_single_object_is_the_correlated_limit():
     room = Room("0_0", "0")
-    room.object_beliefs_semantic = {
-        "obj": {"class_idx": 2, "class_name": "chair", "q": 0.8}
-    }
-    room.object_beliefs_detection = {
-        "obj": {"class_idx": 2, "class_name": "chair", "q": 0.6}
-    }
-    room.object_beliefs_combined = {
-        "obj": {"class_idx": 2, "class_name": "chair", "q": 0.48}
-    }
+    objectt = make_object("a", 2, 0.48, (0, 0, 0), (1, 1, 1))
+    room.objects = [objectt]
 
-    room.compute_class_containment_beliefs()
+    room.compute_fused_class_containment_beliefs()
 
-    assert room.class_containment_beliefs_semantic[2] == pytest.approx(0.8)
-    assert room.class_containment_beliefs_detection[2] == pytest.approx(0.6)
-    assert room.class_containment_beliefs_combined[2] == pytest.approx(0.48)
+    assert room.class_containment_belief == {2: pytest.approx(0.48)}
+    assert room.class_containment_belief_correlated_limit == {2: pytest.approx(0.48)}
 
 
-def test_two_objects_same_class_fuse_independently_per_signal():
+def test_connected_duplicate_components_use_their_maximum_probability():
     room = Room("0_0", "0")
-    room.object_beliefs_semantic = {
-        "a": {"class_idx": 1, "class_name": "table", "q": 0.8},
-        "b": {"class_idx": 1, "class_name": "table", "q": 0.5},
-    }
-    room.object_beliefs_detection = {
-        "a": {"class_idx": 1, "class_name": "table", "q": 1.0},
-        "b": {"class_idx": 1, "class_name": "table", "q": 0.4},
-    }
-    room.object_beliefs_combined = {
-        "a": {"class_idx": 1, "class_name": "table", "q": 0.8},
-        "b": {"class_idx": 1, "class_name": "table", "q": 0.2},
-    }
+    room.objects = [
+        make_object("a", 1, 0.3, (0, 0, 0), (2, 1, 1)),
+        make_object("b", 1, 0.8, (1, 0, 0), (3, 1, 1)),
+        make_object("c", 1, 0.4, (2, 0, 0), (4, 1, 1)),
+        make_object("d", 1, 0.2, (10, 0, 0), (11, 1, 1)),
+    ]
 
-    room.compute_class_containment_beliefs()
+    room.compute_fused_class_containment_beliefs(merge_threshold=0.25)
 
-    assert room.class_containment_beliefs_semantic[1] == pytest.approx(0.9)
-    assert room.class_containment_beliefs_detection[1] == pytest.approx(1.0)
-    assert room.class_containment_beliefs_combined[1] == pytest.approx(0.84)
+    assert room.class_containment_belief[1] == pytest.approx(0.84)
+    assert room.class_containment_belief_correlated_limit[1] == pytest.approx(0.8)
 
 
-def test_different_assigned_classes_do_not_cross_contribute():
+def test_merging_is_idempotent_and_endpoint_thresholds_are_well_defined():
+    objects = [
+        make_object("a", 0, 0.3, (0, 0, 0), (1, 1, 1)),
+        make_object("b", 0, 0.8, (0, 0, 0), (1, 1, 1)),
+        make_object("c", 0, 0.4, (3, 0, 0), (4, 1, 1)),
+    ]
+
+    no_merge = Room.merge_object_groups(objects, overlap_threshold=0.0)
+    strict_merge = Room.merge_object_groups(objects, overlap_threshold=1.0)
+    assert [len(group) for group in no_merge] == [1, 1, 1]
+    assert sorted(len(group) for group in strict_merge) == [1, 2]
+
     room = Room("0_0", "0")
-    for signal in ("semantic", "detection", "combined"):
-        setattr(
-            room,
-            f"object_beliefs_{signal}",
-            {
-                "a": {"class_idx": 0, "class_name": "chair", "q": 0.5},
-                "b": {"class_idx": 1, "class_name": "table", "q": 0.9},
-            },
-        )
-
-    room.compute_class_containment_beliefs()
-
-    assert room.class_containment_beliefs_semantic[0] == pytest.approx(0.5)
-    assert room.class_containment_beliefs_detection[0] == pytest.approx(0.5)
-    assert room.class_containment_beliefs_combined[0] == pytest.approx(0.5)
+    room.objects = objects
+    room.compute_fused_class_containment_beliefs(merge_threshold=1.0)
+    first = dict(room.class_containment_belief)
+    first_limit = dict(room.class_containment_belief_correlated_limit)
+    room.compute_fused_class_containment_beliefs(merge_threshold=1.0)
+    assert room.class_containment_belief == first
+    assert room.class_containment_belief_correlated_limit == first_limit
 
 
-def test_room_propagation_shares_assignment_but_keeps_signal_values_separate():
+def test_undefined_object_probability_is_excluded():
     room = Room("0_0", "0")
-    first = SimpleNamespace(
-        object_id="0_0_0", label_idx=0, p_sem=0.8, p_det=0.6
-    )
-    second = SimpleNamespace(
-        object_id="0_0_1", label_idx=1, p_sem=0.7, p_det=0.25
-    )
-    room.objects = [first, second]
+    room.objects = [
+        make_object("defined", 0, 0.6, (0, 0, 0), (1, 1, 1)),
+        make_object("undefined", 0, None, (0, 0, 0), (1, 1, 1)),
+        make_object("all-undefined", 3, None, (2, 0, 0), (3, 1, 1)),
+    ]
+
+    room.compute_fused_class_containment_beliefs()
+
+    assert room.class_containment_belief == {0: pytest.approx(0.6)}
+    assert room.class_containment_belief_correlated_limit == {0: pytest.approx(0.6)}
+    assert 3 not in room.class_containment_belief
+
+
+def test_graph_propagation_uses_assigned_label_and_fused_probability():
+    room = Room("0_0", "0")
+    room.objects = [
+        make_object("chair", 0, 0.7, (0, 0, 0), (1, 1, 1)),
+        make_object("table", 1, 0.2, (2, 0, 0), (3, 1, 1)),
+    ]
     graph = SimpleNamespace(
         rooms=[room],
-        label_text_feats=np.eye(2, dtype=np.float64),
-        label_classes=["chair", "table"],
+        room_belief_merge_threshold=0.5,
+        cfg=SimpleNamespace(pipeline=SimpleNamespace(room_belief_merge_threshold=0.5)),
     )
 
     Graph.propagate_semantic_uncertainty_to_rooms(graph)
 
-    for obj in room.objects:
-        obj_id = str(obj.object_id)
-        semantic = room.object_beliefs_semantic[obj_id]
-        detection = room.object_beliefs_detection[obj_id]
-        combined = room.object_beliefs_combined[obj_id]
-        assert semantic["class_idx"] == detection["class_idx"] == combined["class_idx"]
-        assert semantic["class_name"] == detection["class_name"] == combined["class_name"]
-        assert detection["q"] == pytest.approx(obj.p_det)
-        assert combined["q"] == pytest.approx(semantic["q"] * detection["q"])
-
-    assert set(room.class_containment_beliefs_semantic) == {0, 1}
-    assert set(room.class_containment_beliefs_detection) == {0, 1}
-    assert set(room.class_containment_beliefs_combined) == {0, 1}
-    assert room.class_containment_probs is None
-    assert room.class_containment_topk is None
-
-
-def test_signal_independence_when_inputs_change():
-    base = Room("0_0", "0")
-    changed_detection = Room("0_0", "0")
-    changed_semantic = Room("0_0", "0")
-
-    base.object_beliefs_semantic = {
-        "obj": {"class_idx": 0, "class_name": "chair", "q": 0.7}
-    }
-    base.object_beliefs_detection = {
-        "obj": {"class_idx": 0, "class_name": "chair", "q": 0.5}
-    }
-    base.object_beliefs_combined = {
-        "obj": {"class_idx": 0, "class_name": "chair", "q": 0.35}
-    }
-
-    changed_detection.object_beliefs_semantic = {
-        "obj": {"class_idx": 0, "class_name": "chair", "q": 0.7}
-    }
-    changed_detection.object_beliefs_detection = {
-        "obj": {"class_idx": 0, "class_name": "chair", "q": 0.2}
-    }
-    changed_detection.object_beliefs_combined = {
-        "obj": {"class_idx": 0, "class_name": "chair", "q": 0.14}
-    }
-
-    changed_semantic.object_beliefs_semantic = {
-        "obj": {"class_idx": 0, "class_name": "chair", "q": 0.9}
-    }
-    changed_semantic.object_beliefs_detection = {
-        "obj": {"class_idx": 0, "class_name": "chair", "q": 0.5}
-    }
-    changed_semantic.object_beliefs_combined = {
-        "obj": {"class_idx": 0, "class_name": "chair", "q": 0.45}
-    }
-
-    for room in (base, changed_detection, changed_semantic):
-        room.compute_class_containment_beliefs()
-
-    assert changed_detection.class_containment_beliefs_semantic[0] == pytest.approx(
-        base.class_containment_beliefs_semantic[0]
-    )
-    assert changed_semantic.class_containment_beliefs_detection[0] == pytest.approx(
-        base.class_containment_beliefs_detection[0]
-    )
-    assert changed_detection.class_containment_beliefs_combined[0] != pytest.approx(
-        base.class_containment_beliefs_combined[0]
-    )
-    assert changed_semantic.class_containment_beliefs_combined[0] != pytest.approx(
-        base.class_containment_beliefs_combined[0]
-    )
+    assert room.class_containment_belief == {0: pytest.approx(0.7), 1: pytest.approx(0.2)}

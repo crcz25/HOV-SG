@@ -11,6 +11,7 @@ import numpy as np
 import open3d as o3d
 
 from hovsg.utils.clip_utils import get_img_feats, get_text_feats_multiple_templates
+from hovsg.utils.eval_utils import find_overlapping_ratio
 
 
 
@@ -35,14 +36,8 @@ class Room:
         self.room_zero_level = None  # Zero level of the room
         self.represent_images = []  # 5 images that represent the appearance of the room
         self.object_counter = 0
-        self.class_containment_probs = None
-        self.class_containment_topk = None
-        self.object_beliefs_semantic = {}
-        self.object_beliefs_detection = {}
-        self.object_beliefs_combined = {}
-        self.class_containment_beliefs_semantic = None
-        self.class_containment_beliefs_detection = None
-        self.class_containment_beliefs_combined = None
+        self.class_containment_belief = {}
+        self.class_containment_belief_correlated_limit = {}
 
     def add_object(self, objectt):
         """
@@ -221,48 +216,131 @@ class Room:
         print("room_id, name: ", self.room_id, self.name)
 
     @staticmethod
-    def _fuse_class_containment(object_beliefs):
-        class_to_qs = defaultdict(list)
-        for entry in object_beliefs.values():
-            class_idx = int(entry["class_idx"])
-            q = float(np.clip(entry["q"], 0.0, 1.0))
-            class_to_qs[class_idx].append(q)
+    def _aabb_iou(object1, object2):
+        """Return AABB IoU for objects whose point clouds are unavailable."""
+        bounds = []
+        for objectt in (object1, object2):
+            vertices = getattr(objectt, "vertices", None)
+            if vertices is None and getattr(objectt, "pcd", None) is not None:
+                pcd = objectt.pcd
+                if hasattr(pcd, "get_axis_aligned_bounding_box"):
+                    vertices = pcd.get_axis_aligned_bounding_box().get_box_points()
+            try:
+                vertices = np.asarray(vertices, dtype=np.float64)
+            except (TypeError, ValueError):
+                return 0.0
+            if vertices.ndim != 2 or vertices.shape[0] == 0 or vertices.shape[1] < 3:
+                return 0.0
+            bounds.append((vertices[:, :3].min(axis=0), vertices[:, :3].max(axis=0)))
+
+        intersection_min = np.maximum(bounds[0][0], bounds[1][0])
+        intersection_max = np.minimum(bounds[0][1], bounds[1][1])
+        intersection = np.prod(np.maximum(intersection_max - intersection_min, 0.0))
+        volumes = [np.prod(np.maximum(high - low, 0.0)) for low, high in bounds]
+        union = volumes[0] + volumes[1] - intersection
+        if union <= 0.0:
+            return 1.0 if np.array_equal(bounds[0][0], bounds[1][0]) and np.array_equal(
+                bounds[0][1], bounds[1][1]
+            ) else 0.0
+        return float(intersection / union)
+
+    @classmethod
+    def _spatial_overlap(cls, object1, object2):
+        """Use the existing point-cloud overlap metric, with an AABB fallback.
+
+        The primary metric is the symmetric fraction of points with a nearest
+        neighbour within 0.02 metres, as implemented by
+        ``hovsg.utils.eval_utils.find_overlapping_ratio``.
+        """
+        points = []
+        for objectt in (object1, object2):
+            pcd = getattr(objectt, "pcd", None)
+            candidate = getattr(pcd, "points", None) if pcd is not None else None
+            try:
+                candidate = np.asarray(candidate, dtype=np.float64)
+            except (TypeError, ValueError):
+                candidate = np.empty((0, 3), dtype=np.float64)
+            if candidate.ndim != 2 or candidate.shape[0] == 0 or candidate.shape[1] < 3:
+                points = []
+                break
+            points.append(candidate[:, :3])
+        if len(points) == 2:
+            return float(find_overlapping_ratio(points[0], points[1], radius=0.02))
+        return cls._aabb_iou(object1, object2)
+
+    @classmethod
+    def merge_object_groups(cls, objects, overlap_threshold=0.5):
+        """Return connected duplicate groups without mutating the objects."""
+        threshold = float(overlap_threshold)
+        if not 0.0 <= threshold <= 1.0:
+            raise ValueError("room_belief_merge_threshold must be in [0, 1]")
+        objects = list(objects)
+        parent = list(range(len(objects)))
+
+        def find(index):
+            while parent[index] != index:
+                parent[index] = parent[parent[index]]
+                index = parent[index]
+            return index
+
+        def union(left, right):
+            left, right = find(left), find(right)
+            if left != right:
+                parent[right] = left
+
+        # At the metric's minimum, the configured endpoint intentionally means
+        # "disable duplicate merging" for sanity checks and ablations.
+        if threshold > 0.0:
+            for left in range(len(objects)):
+                for right in range(left + 1, len(objects)):
+                    if cls._spatial_overlap(objects[left], objects[right]) >= threshold:
+                        union(left, right)
+
+        groups = defaultdict(list)
+        for index, objectt in enumerate(objects):
+            groups[find(index)].append(objectt)
+        return list(groups.values())
+
+    def compute_fused_class_containment_beliefs(self, merge_threshold=0.5):
+        """Propagate fused object probabilities to this room by class."""
+        objects_by_class = defaultdict(list)
+        for objectt in self.objects:
+            label_idx = getattr(objectt, "label_idx", None)
+            probability = getattr(objectt, "p_obj", None)
+            if label_idx is None or probability is None:
+                continue
+            objects_by_class[int(label_idx)].append(objectt)
 
         beliefs = {}
-        for class_idx, qs in class_to_qs.items():
-            not_contained = 1.0
-            for q in qs:
-                not_contained *= 1.0 - q
-            beliefs[class_idx] = float(np.clip(1.0 - not_contained, 0.0, 1.0))
+        correlated_limits = {}
+        for class_idx, objects in objects_by_class.items():
+            groups = self.merge_object_groups(objects, merge_threshold)
+            group_probabilities = [
+                max(float(np.clip(objectt.p_obj, 0.0, 1.0)) for objectt in group)
+                for group in groups
+            ]
+            correlated_limit = float(max(group_probabilities))
+            # This is algebraically the noisy-OR product, evaluated from its
+            # maximum term so the lower-bound assertion is exact in floating
+            # point as well as in real arithmetic.
+            belief = correlated_limit
+            max_consumed = False
+            for probability in group_probabilities:
+                if probability == correlated_limit and not max_consumed:
+                    max_consumed = True
+                    continue
+                belief += (1.0 - belief) * probability
+            belief = float(np.clip(belief, 0.0, 1.0))
+            assert belief >= correlated_limit, (
+                f"Noisy-OR belief {belief} is below correlated limit "
+                f"{correlated_limit} for class {class_idx} in room {self.room_id}"
+            )
+            beliefs[class_idx] = belief
+            correlated_limits[class_idx] = correlated_limit
 
+        self.class_containment_belief = beliefs
+        self.class_containment_belief_correlated_limit = correlated_limits
         return beliefs
-
-    def compute_class_containment_beliefs(self):
-        self.class_containment_beliefs_semantic = self._fuse_class_containment(
-            self.object_beliefs_semantic
-        )
-        self.class_containment_beliefs_detection = self._fuse_class_containment(
-            self.object_beliefs_detection
-        )
-        self.class_containment_beliefs_combined = self._fuse_class_containment(
-            self.object_beliefs_combined
-        )
-
-    def get_class_containment_belief(self, class_idx, signal="combined"):
-        signal_to_attr = {
-            "semantic": "class_containment_beliefs_semantic",
-            "detection": "class_containment_beliefs_detection",
-            "combined": "class_containment_beliefs_combined",
-        }
-        if signal not in signal_to_attr:
-            raise ValueError("signal must be one of: semantic, detection, combined")
-
-        attr_name = signal_to_attr[signal]
-        beliefs = getattr(self, attr_name)
-        if beliefs is None:
-            self.compute_class_containment_beliefs()
-            beliefs = getattr(self, attr_name)
-        return beliefs.get(int(class_idx))
 
     @staticmethod
     def _stringify_belief_keys(beliefs):
@@ -288,23 +366,11 @@ class Room:
             "room_zero_level": self.room_zero_level,
             "embeddings": [i.tolist() for i in self.embeddings],
             "represent_images": self.represent_images,
-            "class_containment_probs": (
-                self.class_containment_probs.tolist()
-                if self.class_containment_probs is not None
-                else None
+            "class_containment_belief": self._stringify_belief_keys(
+                self.class_containment_belief
             ),
-            "class_containment_topk": self.class_containment_topk,
-            "object_beliefs_semantic": self.object_beliefs_semantic,
-            "object_beliefs_detection": self.object_beliefs_detection,
-            "object_beliefs_combined": self.object_beliefs_combined,
-            "class_containment_beliefs_semantic": self._stringify_belief_keys(
-                self.class_containment_beliefs_semantic
-            ),
-            "class_containment_beliefs_detection": self._stringify_belief_keys(
-                self.class_containment_beliefs_detection
-            ),
-            "class_containment_beliefs_combined": self._stringify_belief_keys(
-                self.class_containment_beliefs_combined
+            "class_containment_belief_correlated_limit": self._stringify_belief_keys(
+                self.class_containment_belief_correlated_limit
             ),
         }
         with open(os.path.join(path, str(self.room_id) + ".json"), "w") as outfile:
@@ -327,29 +393,12 @@ class Room:
             self.room_zero_level = metadata["room_zero_level"]
             self.embeddings = [np.asarray(i) for i in metadata["embeddings"]]
             self.represent_images = metadata["represent_images"]
-            class_containment_probs = metadata.get("class_containment_probs")
-            self.class_containment_probs = (
-                np.asarray(class_containment_probs, dtype=np.float64)
-                if class_containment_probs is not None
-                else None
-            )
-            self.class_containment_topk = metadata.get("class_containment_topk")
-            for signal in ("semantic", "detection", "combined"):
-                setattr(
-                    self,
-                    f"object_beliefs_{signal}",
-                    metadata.get(f"object_beliefs_{signal}", {}),
-                )
-                raw_beliefs = metadata.get(f"class_containment_beliefs_{signal}")
-                setattr(
-                    self,
-                    f"class_containment_beliefs_{signal}",
-                    (
-                        {int(k): float(v) for k, v in raw_beliefs.items()}
-                        if raw_beliefs is not None
-                        else None
-                    ),
-                )
+            for field in (
+                "class_containment_belief",
+                "class_containment_belief_correlated_limit",
+            ):
+                raw_beliefs = metadata.get(field, {})
+                setattr(self, field, {int(k): float(v) for k, v in raw_beliefs.items()})
 
     def __str__(self):
         return f"Room ID: {self.room_id}, Name: {self.name}, Floor ID: {self.floor_id}, Objects: {len(self.objects)}"

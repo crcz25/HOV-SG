@@ -136,6 +136,9 @@ class Graph:
         self.negative_text_feats = None
         self.vocab_membership_max_class_similarity = None
         self.vocab_membership_negative_label_count = None
+        self.room_belief_merge_threshold = float(
+            _pipeline_value(self.cfg.pipeline, "room_belief_merge_threshold", 0.5)
+        ) if hasattr(self.cfg, "pipeline") else 0.5
         self.rooms = []
         self.floors = []
         self.full_feats_array = []
@@ -1160,66 +1163,20 @@ class Graph:
             object.u_obj = 1.0 - probability if probability is not None else None
 
     def propagate_semantic_uncertainty_to_rooms(self):
-        """Compute semantic, detection, and combined room beliefs."""
-        if self.label_classes is None:
-            text_feats, classes = get_label_feats(
-                self.clip_model,
-                self.clip_feat_dim,
-                self.cfg.pipeline.obj_labels,
-                self.cfg.main.save_path,
+        """Propagate fused ``object.p_obj`` probabilities to room nodes."""
+        merge_threshold = float(
+            getattr(
+                self,
+                "room_belief_merge_threshold",
+                _pipeline_value(
+                    getattr(self.cfg, "pipeline", None),
+                    "room_belief_merge_threshold",
+                    0.5,
+                ),
             )
-            self.label_text_feats = text_feats
-            self.label_classes = classes
-
+        )
         for room in self.rooms:
-            room.class_containment_probs = None
-            room.class_containment_topk = None
-            room.object_beliefs_semantic = {}
-            room.object_beliefs_detection = {}
-            room.object_beliefs_combined = {}
-
-            for object in room.objects:
-                # An object whose embedding is degenerate, or whose label has
-                # no distinct competitor, has genuinely undefined P_sem: it
-                # carries no evidence about what the room contains and is
-                # skipped rather than entered with a substituted probability.
-                if (
-                    object.label_idx is None
-                    or object.p_sem is None
-                    or object.p_det is None
-                ):
-                    logging.getLogger(__name__).warning(
-                        "Skipping object %s in room belief propagation: "
-                        "label_idx=%s, P_sem=%s, P_det=%s",
-                        object.object_id,
-                        object.label_idx,
-                        object.p_sem,
-                        object.p_det,
-                    )
-                    continue
-                class_idx = int(object.label_idx)
-                p_sem = float(np.clip(object.p_sem, 0.0, 1.0))
-                p_det = float(np.clip(object.p_det, 0.0, 1.0))
-                obj_id = str(object.object_id)
-                class_name = str(self.label_classes[class_idx])
-
-                room.object_beliefs_semantic[obj_id] = {
-                    "class_idx": class_idx,
-                    "class_name": class_name,
-                    "q": p_sem,
-                }
-                room.object_beliefs_detection[obj_id] = {
-                    "class_idx": class_idx,
-                    "class_name": class_name,
-                    "q": p_det,
-                }
-                room.object_beliefs_combined[obj_id] = {
-                    "class_idx": class_idx,
-                    "class_name": class_name,
-                    "q": float(np.clip(p_det * p_sem, 0.0, 1.0)),
-                }
-
-            room.compute_class_containment_beliefs()
+            room.compute_fused_class_containment_beliefs(merge_threshold)
 
     def create_graph(self):
         """
@@ -1354,6 +1311,7 @@ class Graph:
 
         self.recompute_cross_view_consistency()
         self.recompute_semantic_uncertainty()
+        self.propagate_semantic_uncertainty_to_rooms()
 
         print("creating graph...")
         self.create_graph()

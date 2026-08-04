@@ -418,36 +418,6 @@ def compute_vocabulary_membership(
     }
 
 
-def compute_room_containment_probs(
-    semantic_probs,
-    detection_reliabilities=None,
-    prior=0.0,
-):
-    """Aggregate object--class evidence into room--class containment beliefs."""
-    semantic_probs = np.asarray(semantic_probs, dtype=np.float64)
-    if semantic_probs.ndim != 2:
-        raise ValueError("semantic_probs must have shape (num_objects, num_classes)")
-
-    num_objects = semantic_probs.shape[0]
-    if detection_reliabilities is None:
-        detection_reliabilities = np.ones(num_objects, dtype=np.float64)
-    else:
-        detection_reliabilities = np.asarray(
-            detection_reliabilities, dtype=np.float64
-        ).reshape(-1)
-        if detection_reliabilities.shape[0] != num_objects:
-            raise ValueError("one detection reliability is required per object")
-
-    epsilon = float(np.clip(prior, 0.0, 1.0))
-    reliabilities = np.clip(detection_reliabilities, 0.0, 1.0)
-    contributions = np.clip(semantic_probs * reliabilities[:, None], 0.0, 1.0)
-
-    with np.errstate(divide="ignore"):
-        log_not_contained = np.sum(np.log1p(-contributions), axis=0)
-    not_contained = np.exp(log_not_contained)
-    return np.clip(1.0 - (1.0 - epsilon) * not_contained, 0.0, 1.0)
-
-
 def _validate_label_idx(label_idx, num_classes):
     """Return a Python integer after validating a vocabulary row index."""
     label_idx = int(label_idx)
