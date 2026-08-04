@@ -4,6 +4,8 @@
 The generator stores frame files but not timestamps or camera-info files. This
 script therefore requires an FPS and derives pinhole intrinsics from the HOV-SG
 HM3DSem loader convention: 90 degree horizontal FOV, centered principal point.
+Depth PNG values are millimetres. Saved camera poses are camera-to-Habitat-world
+transforms; they are converted to a ROS map frame before serialization.
 """
 
 from __future__ import annotations
@@ -31,10 +33,50 @@ TOPICS = {
     "semantic_info": "/camera/semantic/camera_info",
     "odom": "/odom",
     "tf": "/tf",
+    "tf_static": "/tf_static",
 }
 
 TFMESSAGE_TYPE = "tf2_msgs/msg/TFMessage"
 TFMESSAGE_DEFINITION = "geometry_msgs/TransformStamped[] transforms\n"
+
+# The generator writes Habitat world coordinates (x right, y up, z back).
+# ROS map uses x forward, y left, z up.  This proper rotation changes the
+# *world* convention, while CAMERA_HABITAT_TO_OPTICAL changes the camera's
+# local convention to REP-103 optical (x right, y down, z forward).
+WORLD_HABITAT_TO_ROS = np.array(
+    [[0.0, 0.0, -1.0, 0.0], [-1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0], [0.0, 0.0, 0.0, 1.0]],
+    dtype=np.float64,
+)
+CAMERA_HABITAT_TO_OPTICAL = np.diag([1.0, -1.0, -1.0, 1.0]).astype(np.float64)
+
+# rosbag2 stores these as YAML strings.  Supplying them is important for
+# /tf_static: late-joining TF consumers must receive the static calibration.
+# rosbag2_transport parses a complete QoS profile from this YAML string; a
+# partial profile (for example history/depth/reliability/durability only) is
+# rejected by current ROS 2 releases while reading metadata.yaml.
+def ros2_qos(depth: int, durability: str) -> str:
+    return (
+        f"- history: keep_last\n"
+        f"  depth: {depth}\n"
+        "  reliability: reliable\n"
+        f"  durability: {durability}\n"
+        "  deadline:\n"
+        "    sec: 0\n"
+        "    nsec: 0\n"
+        "  lifespan:\n"
+        "    sec: 0\n"
+        "    nsec: 0\n"
+        "  liveliness: system_default\n"
+        "  liveliness_lease_duration:\n"
+        "    sec: 0\n"
+        "    nsec: 0\n"
+        "  avoid_ros_namespace_conventions: false\n"
+    )
+
+
+ROS2_QOS_RELIABLE_VOLATILE = ros2_qos(depth=10, durability="volatile")
+ROS2_QOS_TF_STATIC = ros2_qos(depth=1, durability="transient_local")
+MAX_COMMON_ROS_TIME_SEC = 2_147_483_647  # ROS 2 builtin_interfaces/Time.sec is int32.
 
 
 def parse_args() -> argparse.Namespace:
@@ -52,7 +94,7 @@ def parse_args() -> argparse.Namespace:
         "--pose-frame",
         choices=("optical", "habitat"),
         default="optical",
-        help="Convert saved Habitat camera pose to ROS optical frame, or keep raw Habitat axes",
+        help="Use REP-103 optical camera axes (default), or keep Habitat camera axes in a non-optical child frame",
     )
     parser.add_argument(
         "--semantic-encoding",
@@ -67,10 +109,18 @@ def parse_args() -> argparse.Namespace:
         parser.error("Provide --ros1-out and/or --ros2-out.")
     if args.fps <= 0:
         parser.error("--fps must be positive.")
+    if not math.isfinite(args.fps):
+        parser.error("--fps must be finite.")
+    if not math.isfinite(args.start_sec) or args.start_sec < 0:
+        parser.error("--start-sec must be a finite, non-negative value.")
+    if args.max_frames is not None and args.max_frames <= 0:
+        parser.error("--max-frames must be positive.")
     return args
 
 
 def prepare_output(path: Path, overwrite: bool) -> None:
+    if not path.parent.is_dir():
+        raise FileNotFoundError(f"Output parent directory does not exist: {path.parent}")
     if not path.exists():
         return
     if not overwrite:
@@ -82,20 +132,39 @@ def prepare_output(path: Path, overwrite: bool) -> None:
 
 
 def collect_frames(scene_dir: Path, max_frames: int | None) -> list[dict[str, Path | None]]:
-    rgb = {p.stem: p for p in sorted((scene_dir / "rgb").glob("*.png"))}
-    depth = {p.stem: p for p in sorted((scene_dir / "depth").glob("*.png"))}
-    pose = {p.stem: p for p in sorted((scene_dir / "pose").glob("*.txt"))}
+    if not scene_dir.is_dir():
+        raise FileNotFoundError(f"Scene directory does not exist: {scene_dir}")
+
+    def files(directory: str, pattern: str) -> dict[str, Path]:
+        path = scene_dir / directory
+        if not path.is_dir():
+            raise FileNotFoundError(f"Missing required input directory: {path}")
+        result = {p.stem: p for p in sorted(path.glob(pattern))}
+        if not result:
+            raise FileNotFoundError(f"No {pattern} files found in required directory: {path}")
+        return result
+
+    rgb = files("rgb", "*.png")
+    depth = files("depth", "*.png")
+    pose = files("pose", "*.txt")
     semantic_dir = scene_dir / "semantic"
     semantic = {p.stem: p for p in sorted(semantic_dir.glob("*.npy"))} if semantic_dir.is_dir() else {}
 
-    common = sorted(set(rgb) & set(depth) & set(pose))
-    if not common:
-        raise RuntimeError(f"No synchronized rgb/depth/pose frames found in {scene_dir}")
+    expected = set(rgb)
+    for name, stream in (("depth", depth), ("pose", pose)):
+        if set(stream) != expected:
+            missing = sorted(expected - set(stream))
+            extra = sorted(set(stream) - expected)
+            raise RuntimeError(
+                f"Unsynchronized {name} stream: {len(missing)} missing and {len(extra)} extra frame(s) relative to rgb"
+            )
 
-    missing_semantic = semantic_dir.is_dir() and set(common) - set(semantic)
-    if missing_semantic:
-        raise RuntimeError(f"Semantic directory exists but is missing {len(missing_semantic)} frame(s)")
+    if semantic_dir.is_dir() and set(semantic) != expected:
+        missing = len(expected - set(semantic))
+        extra = len(set(semantic) - expected)
+        raise RuntimeError(f"Unsynchronized semantic stream: {missing} missing and {extra} extra frame(s) relative to rgb")
 
+    common = sorted(expected)
     if max_frames is not None:
         common = common[:max_frames]
 
@@ -122,11 +191,20 @@ def timestamp_ns(start_sec: float, fps: float, frame_idx: int) -> int:
     return int(round((start_sec + frame_idx / fps) * 1_000_000_000))
 
 
+def make_timestamps(frame_count: int, start_sec: float, fps: float) -> list[int]:
+    stamps = [timestamp_ns(start_sec, fps, idx) for idx in range(frame_count)]
+    if stamps[-1] // 1_000_000_000 > MAX_COMMON_ROS_TIME_SEC:
+        raise ValueError(f"Timestamps exceed the ROS 1/ROS 2 common Time range ({MAX_COMMON_ROS_TIME_SEC} seconds)")
+    if any(later <= earlier for earlier, later in zip(stamps, stamps[1:])):
+        raise ValueError("Synthetic timestamps are not strictly increasing; choose an FPS below 1e9")
+    return stamps
+
+
 def matrix_to_quaternion(rot: np.ndarray) -> np.ndarray:
     trace = float(np.trace(rot))
     if trace > 0.0:
         s = math.sqrt(trace + 1.0) * 2.0
-        return np.array(
+        quat = np.array(
             [
                 (rot[2, 1] - rot[1, 2]) / s,
                 (rot[0, 2] - rot[2, 0]) / s,
@@ -135,6 +213,7 @@ def matrix_to_quaternion(rot: np.ndarray) -> np.ndarray:
             ],
             dtype=np.float64,
         )
+        return quat / np.linalg.norm(quat)
 
     diag = np.diag(rot)
     axis = int(np.argmax(diag))
@@ -147,14 +226,34 @@ def matrix_to_quaternion(rot: np.ndarray) -> np.ndarray:
     else:
         s = math.sqrt(1.0 + rot[2, 2] - rot[0, 0] - rot[1, 1]) * 2.0
         quat = [(rot[0, 2] + rot[2, 0]) / s, (rot[1, 2] + rot[2, 1]) / s, 0.25 * s, (rot[1, 0] - rot[0, 1]) / s]
-    return np.array(quat, dtype=np.float64)
+    quat_array = np.array(quat, dtype=np.float64)
+    norm = np.linalg.norm(quat_array)
+    if not math.isfinite(norm) or norm == 0.0:
+        raise ValueError("Rotation matrix produced an invalid quaternion")
+    return quat_array / norm
 
 
 def read_pose(path: Path, pose_frame: str) -> np.ndarray:
-    pose = np.loadtxt(path, dtype=np.float64).reshape(4, 4)
+    try:
+        values = np.loadtxt(path, dtype=np.float64)
+    except (OSError, ValueError) as exc:
+        raise RuntimeError(f"Could not read pose {path}: {exc}") from exc
+    if values.size != 16:
+        raise ValueError(f"Pose must contain exactly 16 values: {path}")
+    pose = values.reshape(4, 4)
+    if not np.isfinite(pose).all():
+        raise ValueError(f"Pose contains non-finite values: {path}")
+    if not np.allclose(pose[3], [0.0, 0.0, 0.0, 1.0], atol=1e-6):
+        raise ValueError(f"Pose has an invalid homogeneous last row: {path}")
+    rotation = pose[:3, :3]
+    if not np.allclose(rotation.T @ rotation, np.eye(3), atol=1e-5) or not np.isclose(
+        np.linalg.det(rotation), 1.0, atol=1e-5
+    ):
+        raise ValueError(f"Pose has a non-rigid rotation matrix: {path}")
+
+    pose = WORLD_HABITAT_TO_ROS @ pose
     if pose_frame == "optical":
-        conversion = np.diag([1.0, -1.0, -1.0, 1.0])
-        pose = pose @ conversion
+        pose = pose @ CAMERA_HABITAT_TO_OPTICAL
     return pose
 
 
@@ -240,12 +339,21 @@ class MessageFactory:
         orientation = self.t["geometry_msgs/msg/Quaternion"](*map(float, quat))
         return point, orientation
 
-    def odom(self, stamp_ns: int, frame_id: str, child_frame_id: str, pose: np.ndarray):
+    def odom(
+        self,
+        stamp_ns: int,
+        frame_id: str,
+        child_frame_id: str,
+        pose: np.ndarray,
+        linear_velocity: np.ndarray,
+        angular_velocity: np.ndarray,
+    ):
         point, orientation = self.pose_parts(pose)
         pose_msg = self.t["geometry_msgs/msg/Pose"](point, orientation)
         pose_cov = self.t["geometry_msgs/msg/PoseWithCovariance"](pose_msg, np.zeros(36, dtype=np.float64))
-        zero = self.t["geometry_msgs/msg/Vector3"](0.0, 0.0, 0.0)
-        twist = self.t["geometry_msgs/msg/Twist"](zero, zero)
+        linear = self.t["geometry_msgs/msg/Vector3"](*map(float, linear_velocity))
+        angular = self.t["geometry_msgs/msg/Vector3"](*map(float, angular_velocity))
+        twist = self.t["geometry_msgs/msg/Twist"](linear, angular)
         twist_cov = self.t["geometry_msgs/msg/TwistWithCovariance"](twist, np.zeros(36, dtype=np.float64))
         return self.t["nav_msgs/msg/Odometry"](
             header=self.header(stamp_ns, frame_id),
@@ -280,92 +388,187 @@ def add_connections(writer, factory: MessageFactory, include_semantic: bool) -> 
         "depth_info": (TOPICS["depth_info"], "sensor_msgs/msg/CameraInfo"),
         "odom": (TOPICS["odom"], "nav_msgs/msg/Odometry"),
         "tf": (TOPICS["tf"], TFMESSAGE_TYPE),
+        "tf_static": (TOPICS["tf_static"], TFMESSAGE_TYPE),
     }
     if include_semantic:
         topics_and_types["semantic"] = (TOPICS["semantic"], "sensor_msgs/msg/Image")
         topics_and_types["semantic_info"] = (TOPICS["semantic_info"], "sensor_msgs/msg/CameraInfo")
-    return {
-        key: writer.add_connection(topic, typename, typestore=factory.typestore)
-        for key, (topic, typename) in topics_and_types.items()
-    }
+    connections = {}
+    for key, (topic, typename) in topics_and_types.items():
+        if isinstance(writer, Rosbag1Writer):
+            connections[key] = writer.add_connection(
+                topic,
+                typename,
+                typestore=factory.typestore,
+                latching=1 if key == "tf_static" else None,
+            )
+        else:
+            connections[key] = writer.add_connection(
+                topic,
+                typename,
+                typestore=factory.typestore,
+                offered_qos_profiles=ROS2_QOS_TF_STATIC if key == "tf_static" else ROS2_QOS_RELIABLE_VOLATILE,
+            )
+    return connections
 
 
-def write_frames(writer, factory: MessageFactory, connections: dict[str, object], args: argparse.Namespace) -> None:
-    frames = collect_frames(args.scene_dir, args.max_frames)
+def validate_frame_ids(args: argparse.Namespace, include_semantic: bool) -> None:
+    frame_ids = [args.frame_id, args.color_frame_id, args.depth_frame_id]
+    if include_semantic:
+        frame_ids.append(args.semantic_frame_id)
+    for frame_id in frame_ids:
+        if not frame_id or frame_id.startswith("/") or any(char.isspace() for char in frame_id):
+            raise ValueError(f"Invalid ROS frame id: {frame_id!r}")
+    if len(set(frame_ids)) != len(frame_ids):
+        raise ValueError("World, color, depth, and semantic frame IDs must be distinct")
+    sensor_frame_ids = [args.color_frame_id, args.depth_frame_id]
+    if include_semantic:
+        sensor_frame_ids.append(args.semantic_frame_id)
+    if args.pose_frame == "habitat" and any("optical" in frame_id for frame_id in sensor_frame_ids):
+        raise ValueError(
+            "--pose-frame habitat keeps Habitat camera axes; use non-optical sensor frame IDs or use --pose-frame optical"
+        )
+
+
+def read_images(frame: dict[str, Path | None], include_semantic: bool, semantic_encoding: str):
+    color_bgr = cv2.imread(str(frame["rgb"]), cv2.IMREAD_UNCHANGED)
+    if color_bgr is None:
+        raise RuntimeError(f"Could not read RGB image {frame['rgb']}")
+    if color_bgr.dtype != np.uint8 or color_bgr.ndim != 3 or color_bgr.shape[2] not in (3, 4):
+        raise ValueError(f"RGB image must be uint8 BGR/BGRA with 3 or 4 channels: {frame['rgb']}")
+    color = cv2.cvtColor(color_bgr, cv2.COLOR_BGR2RGB if color_bgr.shape[2] == 3 else cv2.COLOR_BGRA2RGB)
+    height, width = color.shape[:2]
+    if height <= 0 or width <= 0:
+        raise ValueError(f"RGB image has invalid dimensions: {frame['rgb']}")
+
+    depth = cv2.imread(str(frame["depth"]), cv2.IMREAD_UNCHANGED)
+    if depth is None:
+        raise RuntimeError(f"Could not read depth image {frame['depth']}")
+    if depth.dtype != np.uint16 or depth.ndim != 2:
+        raise ValueError(f"Depth image must be a single-channel uint16 PNG in millimetres: {frame['depth']}")
+    if depth.shape != (height, width):
+        raise ValueError(f"RGB/depth dimensions differ at {frame['rgb']} and {frame['depth']}")
+
+    semantic_image = None
+    if include_semantic:
+        try:
+            semantic = np.load(frame["semantic"], allow_pickle=False)
+        except (OSError, ValueError) as exc:
+            raise RuntimeError(f"Could not read semantic labels {frame['semantic']}: {exc}") from exc
+        if semantic.ndim != 2 or semantic.shape != (height, width) or not np.issubdtype(semantic.dtype, np.integer):
+            raise ValueError(f"Semantic labels must be a 2-D integer image matching RGB dimensions: {frame['semantic']}")
+        min_label, max_label = int(semantic.min()), int(semantic.max())
+        if min_label < 0:
+            raise ValueError(f"Semantic labels must be non-negative: {frame['semantic']}")
+        limit = np.iinfo(np.int32).max if semantic_encoding == "32SC1" else np.iinfo(np.uint16).max
+        if max_label > limit:
+            raise ValueError(f"Semantic label exceeds {semantic_encoding} range: {frame['semantic']}")
+        semantic_image = semantic.astype(np.int32 if semantic_encoding == "32SC1" else np.uint16, copy=False)
+    return color, depth, semantic_image
+
+
+def velocities_from_poses(previous: np.ndarray | None, current: np.ndarray, dt_ns: int | None) -> tuple[np.ndarray, np.ndarray]:
+    if previous is None or dt_ns is None or dt_ns <= 0:
+        return np.zeros(3, dtype=np.float64), np.zeros(3, dtype=np.float64)
+    dt = dt_ns / 1_000_000_000.0
+    # nav_msgs/Odometry expresses twist in child_frame_id coordinates.
+    linear = current[:3, :3].T @ ((current[:3, 3] - previous[:3, 3]) / dt)
+    relative_rotation = previous[:3, :3].T @ current[:3, :3]
+    quaternion = matrix_to_quaternion(relative_rotation)
+    if quaternion[3] < 0.0:
+        quaternion = -quaternion
+    sin_half_angle = np.linalg.norm(quaternion[:3])
+    if sin_half_angle < 1e-9:
+        angular = np.zeros(3, dtype=np.float64)
+    else:
+        angle = 2.0 * math.atan2(sin_half_angle, quaternion[3])
+        axis = quaternion[:3] / sin_half_angle
+        angular = axis * (angle / dt)
+    if not np.isfinite(linear).all() or not np.isfinite(angular).all():
+        raise ValueError("Pose sequence produced a non-finite odometry twist")
+    return linear, angular
+
+
+def write_frames(
+    writer,
+    factory: MessageFactory,
+    connections: dict[str, object],
+    args: argparse.Namespace,
+    frames: list[dict[str, Path | None]],
+) -> None:
     include_semantic = frames[0]["semantic"] is not None
+    stamps = make_timestamps(len(frames), args.start_sec, args.fps)
+    previous_pose = None
+    previous_stamp = None
 
     desc = f"Writing {args.scene_dir.name}"
     for idx, frame in enumerate(tqdm(frames, desc=desc, unit="frame")):
-        stamp = timestamp_ns(args.start_sec, args.fps, idx)
-
-        color_bgr = cv2.imread(str(frame["rgb"]), cv2.IMREAD_COLOR)
-        if color_bgr is None:
-            raise RuntimeError(f"Could not read RGB image {frame['rgb']}")
-        color = cv2.cvtColor(color_bgr, cv2.COLOR_BGR2RGB)
+        stamp = stamps[idx]
+        color, depth, semantic_image = read_images(frame, include_semantic, args.semantic_encoding)
         height, width = color.shape[:2]
-
-        depth = cv2.imread(str(frame["depth"]), cv2.IMREAD_UNCHANGED)
-        if depth is None:
-            raise RuntimeError(f"Could not read depth image {frame['depth']}")
-        if depth.dtype != np.uint16:
-            raise RuntimeError(f"Expected uint16 depth PNG, got {depth.dtype} at {frame['depth']}")
-
         pose = read_pose(Path(frame["pose"]), args.pose_frame)
+        linear_velocity, angular_velocity = velocities_from_poses(
+            previous_pose, pose, None if previous_stamp is None else stamp - previous_stamp
+        )
 
         messages = {
             "color": factory.image(stamp, args.color_frame_id, color, "rgb8"),
             "depth": factory.image(stamp, args.depth_frame_id, depth, "16UC1"),
             "color_info": factory.camera_info(stamp, args.color_frame_id, width, height),
             "depth_info": factory.camera_info(stamp, args.depth_frame_id, width, height),
-            "odom": factory.odom(stamp, args.frame_id, args.color_frame_id, pose),
-            "tf": factory.tf_message(
-                [
-                    factory.transform(stamp, args.frame_id, args.color_frame_id, pose),
-                    factory.identity_transform(stamp, args.color_frame_id, args.depth_frame_id),
-                ]
+            "odom": factory.odom(
+                stamp, args.frame_id, args.color_frame_id, pose, linear_velocity, angular_velocity
             ),
+            "tf": factory.tf_message([factory.transform(stamp, args.frame_id, args.color_frame_id, pose)]),
         }
 
         if include_semantic:
-            semantic = np.load(frame["semantic"])
-            if args.semantic_encoding == "32SC1":
-                semantic_image = semantic.astype(np.int32, copy=False)
-            else:
-                if int(semantic.max()) > np.iinfo(np.uint16).max:
-                    raise RuntimeError("Semantic label exceeds uint16 range; use --semantic-encoding 32SC1")
-                semantic_image = semantic.astype(np.uint16, copy=False)
             messages["semantic"] = factory.image(stamp, args.semantic_frame_id, semantic_image, args.semantic_encoding)
             messages["semantic_info"] = factory.camera_info(stamp, args.semantic_frame_id, width, height)
-            messages["tf"].transforms.append(
-                factory.identity_transform(stamp, args.color_frame_id, args.semantic_frame_id)
-            )
+
+        if idx == 0:
+            static_transforms = [factory.identity_transform(stamp, args.color_frame_id, args.depth_frame_id)]
+            if include_semantic:
+                static_transforms.append(factory.identity_transform(stamp, args.color_frame_id, args.semantic_frame_id))
+            messages = {"tf_static": factory.tf_message(static_transforms), **messages}
 
         for key, msg in messages.items():
             typename = msg.__msgtype__
-            if isinstance(writer, Rosbag1Writer):
-                data = factory.typestore.serialize_ros1(msg, typename)
-            else:
-                data = factory.typestore.serialize_cdr(msg, typename)
-            writer.write(connections[key], stamp, data)
+            try:
+                if isinstance(writer, Rosbag1Writer):
+                    data = factory.typestore.serialize_ros1(msg, typename)
+                else:
+                    data = factory.typestore.serialize_cdr(msg, typename)
+                writer.write(connections[key], stamp, data)
+            except Exception as exc:
+                raise RuntimeError(f"Failed to serialize/write {typename} on {TOPICS[key]} at {stamp} ns") from exc
+        previous_pose = pose
+        previous_stamp = stamp
 
 
 def convert(args: argparse.Namespace) -> None:
     frames = collect_frames(args.scene_dir, args.max_frames)
     include_semantic = frames[0]["semantic"] is not None
+    validate_frame_ids(args, include_semantic)
+    # Detect rounding collisions before replacing an existing output.
+    make_timestamps(len(frames), args.start_sec, args.fps)
 
     if args.ros1_out:
         prepare_output(args.ros1_out, args.overwrite)
         factory = MessageFactory(Stores.ROS1_NOETIC)
         with Rosbag1Writer(args.ros1_out) as writer:
             connections = add_connections(writer, factory, include_semantic)
-            write_frames(writer, factory, connections, args)
+            write_frames(writer, factory, connections, args, frames)
 
     if args.ros2_out:
         prepare_output(args.ros2_out, args.overwrite)
         factory = MessageFactory(Stores.ROS2_HUMBLE)
-        with Rosbag2Writer(args.ros2_out, version=9) as writer:
+        # rosbags writes the portable rosbag2 SQLite3/metadata-v8 format.
+        # Its Writer has no `version` parameter; passing one prevented every
+        # ROS 2 conversion before a bag directory could be created.
+        with Rosbag2Writer(args.ros2_out) as writer:
             connections = add_connections(writer, factory, include_semantic)
-            write_frames(writer, factory, connections, args)
+            write_frames(writer, factory, connections, args, frames)
 
 
 def main() -> None:
