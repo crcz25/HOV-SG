@@ -10,11 +10,11 @@ import numpy as np
 
 # function to display the topdown map
 from scipy.spatial.transform import Rotation as R
-from typing import List, Tuple, Union, Dict
+from typing import List, Tuple, Union, Dict, Optional
 
 
 def make_cfg(
-    settings: Dict, root_dataset_dir: str, raw_data_dir: str, scene_name: str
+    settings: Dict, root_dataset_dir: str, raw_data_dir: str, scene_name: str, scene_dataset_config_file: Optional[str] = None
 ) -> habitat_sim.Configuration:
     """Create a configuration for the simulator based on the input parameter dictionary.
        This function is for Habitat3DSemantic dataset.
@@ -30,7 +30,7 @@ def make_cfg(
     """
     backend_cfg = habitat_sim.SimulatorConfiguration()
     backend_cfg.scene_id = os.path.join(raw_data_dir, scene_name + ".basis.glb")
-    backend_cfg.scene_dataset_config_file = os.path.join(
+    backend_cfg.scene_dataset_config_file = scene_dataset_config_file or os.path.join(
         root_dataset_dir, "hm3d_annotated_basis.scene_dataset_config.json"
     )
 
@@ -47,6 +47,7 @@ def make_cfg(
         settings["width"],
         [0.0, settings["sensor_height"], 1.3],
         orientation=[-math.pi / 8, 0, 0],
+        hfov=settings.get("hfov"),
     )
     sensor_spec.append(back_rgb_sensor_spec)
 
@@ -57,6 +58,7 @@ def make_cfg(
             settings["height"],
             settings["width"],
             [0.0, settings["sensor_height"], 0.0],
+            hfov=settings.get("hfov"),
         )
         sensor_spec.append(rgb_sensor_spec)
 
@@ -67,6 +69,7 @@ def make_cfg(
             settings["height"],
             settings["width"],
             [0.0, settings["sensor_height"], 0.0],
+            hfov=settings.get("hfov"),
         )
         sensor_spec.append(depth_sensor_spec)
 
@@ -77,6 +80,7 @@ def make_cfg(
             settings["height"],
             settings["width"],
             [0.0, settings["sensor_height"], 0.0],
+            hfov=settings.get("hfov"),
         )
         sensor_spec.append(semantic_sensor_spec)
 
@@ -124,6 +128,7 @@ def make_sensor_spec(
     w: int,
     position: Union[List, np.ndarray],
     orientation: Union[List, np.ndarray] = None,
+    hfov: Optional[float] = None,
 ) -> habitat_sim.CameraSensorSpec:
     """Create the sensor configuration for the habitat-sim simulator.
 
@@ -144,6 +149,8 @@ def make_sensor_spec(
     sensor_spec.sensor_type = sensor_type
     sensor_spec.resolution = [h, w]
     sensor_spec.position = position
+    if hfov is not None:
+        sensor_spec.hfov = float(hfov)
     if orientation is not None:
         sensor_spec.orientation = np.array(orientation)
 
@@ -279,4 +286,3 @@ def print_scene_recur(
                 count += 1
                 if count >= limit_output:
                     return None
-

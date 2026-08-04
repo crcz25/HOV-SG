@@ -174,16 +174,36 @@ We used the following scenes from the Habitat Matterport 3D Semantics dataset in
 
 </details>
 
-1. Our method requires posed input data. Because of that, we recorded trajectories for each sequence we evaluate on. We provide a script (`hovsg/data/hm3dsem/gen_hm3dsem_walks_from_poses.py`) that turns a set of camera poses (`hovsg/data/hm3dsem/metadata/poses`) into a sequence of RGB-D observations using the [habitat-sim](https://github.com/facebookresearch/habitat-sim) simulator. The output includes RGB, depth, poses and frame-wise semantic/panoptic ground truth:
+#### Automatic walk and ground-truth preparation
+
+The preparation scripts discover scene directories automatically; no scene IDs, repository-relative paths, or per-scene configuration edits are required. A raw scene is eligible for rendering when it contains exactly one `*.basis.glb` mesh and the matching `*.semantic.glb` and `*.semantic.txt` files, the dataset root contains a `*.scene_dataset_config.json`, and a matching trajectory exists at `<pose_dir>/<scene_id>.txt`. A trajectory file contains one whitespace-separated 4×4 camera-to-world matrix per line.
+
+The walk renderer validates every discovered scene, reports every unavailable source file, and continues after a skipped or failed scene. It writes only floor `0`: poses outside the first-floor Y bounds are omitted before RGB, depth, semantic, and pose files are written. Bounds come from an optional `Scene Name,Separation Heights` CSV; otherwise the Habitat semantic level whose ID is `0` is used. The output records this selection in `camera_info.json`.
+
 ```bash
-  python data/habitat/gen_hm3dsem_from_poses.py --dataset_dir <hm3dsem_dir> --save_dir data/hm3dsem_walks/
+python hovsg/data/hm3dsem/gen_hm3dsem_walks_from_poses.py \
+  --dataset-dir data/hm3d \
+  --save-dir data/hm3dsem_walks \
+  --pose-dir hovsg/data/hm3dsem/metadata/poses \
+  --floor-metadata hovsg/data/hm3dsem/metadata/Per_Scene_Floor_Sep.csv
 ```
 
-2. Secondly, we construct a new hierarchical graph-structured dataset that is called `hm3dsem_walks` that includes ground truth based on all observations recorded. To produce this ground-truth data please execute the following: First, define the following config paths: `main.package_path`, `main.dataset_path`, `main.raw_data_path`, and `main.save_path` under `config/create_graph.yaml`. For each scene, define the `main.scene_id`, `main.split`. Next, execute the following to obtain floor-, region-, and object-level ground truth data per scene. We utilize every recorded frame without skipping (see parameter `dataset.hm3dsem.gt_skip_frames`) and recommend 128 GB of RAM to compile this as the scenes differ in size:
+Use `--split <name>` or repeat `--scene-id <id>` to restrict discovery, and use `--dry-run` to report validity without rendering. Existing scene output is preserved unless `--overwrite` is given.
+
+Ground-truth compilation validates that RGB, depth, semantic, and pose directories have the same non-empty frame stems before processing. It rejects walks containing any non-floor-0 pose, crops every generated point cloud to floor `0`, and writes only floor-0 objects, regions, and scene metadata. Region vote and manual-label CSVs are optional enrichments; raw semantic object and region IDs remain authoritative.
+
+When supplied, floor metadata must contain `Scene Name` and `Separation Heights` columns, where the latter is an ordered list of floor boundaries. Region-vote metadata uses `Scene Name`, `Region #`, and `Weighted Room Proposal`; manual region metadata uses `Scene Name`, `Region #`, and `Region Category`. Missing optional region metadata leaves those category fields empty but does not remove the raw object or region annotations.
+
 ```bash
-cd HOV-SG
-python hovsg/data/hm3dsem/create_hm3dsem_walks_gt.py
+python hovsg/data/hm3dsem/create_hm3dsem_walks_gt.py \
+  --dataset-dir data/hm3d \
+  --walks-dir data/hm3dsem_walks \
+  --floor-metadata hovsg/data/hm3dsem/metadata/Per_Scene_Floor_Sep.csv \
+  --region-votes hovsg/data/hm3dsem/metadata/Per_Scene_Region_Weighted_Votes.csv \
+  --region-labels hovsg/data/hm3dsem/metadata/Per_Scene_Region_Labels.csv
 ```
+
+Each completed `<walks_dir>/<split>/<scene_id>` contains the aligned `rgb/`, `depth/`, `semantic/`, and `pose/` frame directories, plus `objects/`, `regions/`, `scene_rgb.ply`, `scene_panoptic.ply`, `scene_info.json`, and `semantic_label_map.csv`. Frame names retain the existing `<scene_name>_<zero-padded-index>` convention; `camera_info.json` is additional metadata used to preserve camera intrinsics and the selected floor. A failure in any one scene does not prevent the remaining discovered scenes from being processed.
 
 To evaluate semantic segmentation cababilities, we used [ScanNet](http://www.scan-net.org/) and [Replica](https://github.com/facebookresearch/Replica-Dataset).
 ### ScanNet

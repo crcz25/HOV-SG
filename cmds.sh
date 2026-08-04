@@ -6,3 +6,6 @@ done
 cd /workspace/HOV-SG && python application/create_graph.py main.dataset=hm3dsem main.dataset_path=/workspace/HOV-SG/data/hm3dsem_walks main.split=val main.scene_id=00824-Dd4bFSTQ8gi main.save_path=/workspace/HOV-SG/data/scene_graphs
 
 TxQKHP@b1S
+
+
+bash zip_scene_graphs.sh hm3dsem/00824-Dd4bFSTQ8gi

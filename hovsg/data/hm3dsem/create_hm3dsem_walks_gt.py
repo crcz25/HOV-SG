@@ -1,22 +1,38 @@
+import argparse
+import ast
 from collections import defaultdict
 import json
+import logging
 import math
 import os
+from pathlib import Path
 
 import cv2
 import habitat_sim
-import hydra
 import numpy as np
 import open3d as o3d
 import pandas as pd
 
-from omegaconf import DictConfig, OmegaConf
 from PIL import Image, ImageColor
 from tqdm import tqdm
-from scipy.signal import find_peaks
-from scipy.ndimage import gaussian_filter1d
+from scipy.spatial import cKDTree
 
 from hovsg.data.hm3dsem.habitat_utils import make_cfg
+from hovsg.data.hm3dsem.preparation_utils import (
+    FloorBounds,
+    discover_aligned_walk_frames,
+    discover_scene_paths,
+    floor_bounds_from_metadata,
+    floor_bounds_from_semantic_scene,
+    missing_output_paths,
+    pose_is_on_floor,
+    resolve_scene_config,
+    validate_raw_scene,
+)
+from scripts.generate_hm3dsem_semantic_label_csv import generate_semantic_label_map
+
+
+LOG = logging.getLogger("hm3dsem.ground_truth")
 
 
 class PanopticObject:
@@ -24,9 +40,11 @@ class PanopticObject:
         # semantics object info
         self.id = int(line[0])
         self.hex = line[1]
-        self.category = eval(line[2])
+        try:
+            self.category = ast.literal_eval(line[2])
+        except (SyntaxError, ValueError):
+            self.category = line[2]
         self.region_id = int(line[3])
-        print(self.category)
         self.floor_id = None
         self.rgb = np.array(ImageColor.getcolor("#" + self.hex, "RGB"))
         self.type = "object"
@@ -169,7 +187,11 @@ class PanopticScene:
 
     def append_habitat_infos(self):
         for obj in self.scene.objects:
-            obj_id = int(obj.id.split("_")[1])
+            try:
+                obj_id = int(str(obj.id).rsplit("_", maxsplit=1)[1])
+            except (IndexError, ValueError):
+                LOG.warning("Ignoring Habitat semantic object with an unparseable ID: %s", obj.id)
+                continue
 
             if obj_id in self.id2obj_idx:
                 self.objects[self.id2obj_idx[obj_id]].aabb_center = habitat_attr_value(obj.aabb.center)
@@ -205,88 +227,42 @@ class PanopticScene:
             if obj.points is not None:
                 obj.mapped = True
 
-    def label_regions(self, region_votes_file_path, region_labels_file_path):
+    def label_regions(self, region_votes_file_path=None, region_labels_file_path=None):
         # load region labels
-        region_votes = pd.read_csv(
-            region_votes_file_path, header=0, usecols=["Scene Name", "Region #", "Weighted Room Proposal"], sep=","
-        )
-        print("Labeling regions based on provided category votes")
-        for ind in region_votes.index:
-            if region_votes["Scene Name"][ind] == self.scene_dir_name:
-                if int(region_votes["Region #"][ind]) in self.regions:
-                    self.regions[int(region_votes["Region #"][ind])].voted_category = (
-                        region_votes["Weighted Room Proposal"][ind].strip().lower()
-                    )
-                else:
-                    print(
-                        "Region {} not contained in the mapped scene, thus not labeling it".format(
-                            region_votes["Region #"][ind]
-                        )
-                    )
+        if region_votes_file_path and os.path.isfile(region_votes_file_path):
+            region_votes = pd.read_csv(
+                region_votes_file_path, header=0, usecols=["Scene Name", "Region #", "Weighted Room Proposal"], sep=","
+            )
+            for ind in region_votes.index:
+                if region_votes["Scene Name"][ind] == self.scene_dir_name and int(region_votes["Region #"][ind]) in self.regions:
+                    self.regions[int(region_votes["Region #"][ind])].voted_category = region_votes["Weighted Room Proposal"][ind].strip().lower()
 
-        region_labels = pd.read_csv(
-            region_labels_file_path, header=0, usecols=["Scene Name", "Region #", "Region Category"], sep=","
-        )
-        print("Labeling regions based on own manual category labels")
-        for ind in region_labels.index:
-            if region_labels["Scene Name"][ind] == self.scene_dir_name:
-                if int(region_labels["Region #"][ind]) in self.regions:
-                    self.regions[int(region_labels["Region #"][ind])].category = (
-                        region_labels["Region Category"][ind].strip().lower()
-                    )
-                else:
-                    print(
-                        "Region {} not contained in the mapped scene, thus not labeling it".format(
-                            region_labels["Region #"][ind]
-                        )
-                    )
+        if region_labels_file_path and os.path.isfile(region_labels_file_path):
+            region_labels = pd.read_csv(
+                region_labels_file_path, header=0, usecols=["Scene Name", "Region #", "Region Category"], sep=","
+            )
+            for ind in region_labels.index:
+                if region_labels["Scene Name"][ind] == self.scene_dir_name and int(region_labels["Region #"][ind]) in self.regions:
+                    self.regions[int(region_labels["Region #"][ind])].category = region_labels["Region Category"][ind].strip().lower()
 
     def get_region_objects(self, region_id):
         if isinstance(region_id, str):
             region_id = int(region_id)
         return self.regions[region_id]
     
-    def obtain_floor_separation_heights(self, floor_labels_file_path):
-
-        floor_height_labels = pd.read_csv(floor_labels_file_path, 
-                                          header=0, 
-                                          usecols=["Scene Name", "Separation Heights"], 
-                                          sep=",")
-
-        self.floor_coords = []
-        for ind in floor_height_labels.index:
-            if floor_height_labels["Scene Name"][ind] == self.scene_dir_name:
-                self.floor_coords = eval(floor_height_labels["Separation Heights"][ind])
-
-        assert len(self.floor_coords) > 0
-
-        self.num_floors = len(self.floor_coords) - 1
-        print("number of floors:", self.num_floors)
-        print("floor_coords:", self.floor_coords)
-        self.assign_regions_to_floors()
-
-    def assign_regions_to_floors(self):
-        # go through all regions and assign floor id
-        for floor_idx in range(self.num_floors):
-            lower = self.floor_coords[floor_idx]
-            upper = self.floor_coords[floor_idx + 1]
-            self.floors[floor_idx] = PanopticLevel(floor_idx, lower, upper)
-        for region in list(self.regions.values()):
-            for floor in list(self.floors.values()):
-                if region.mean_height > floor.lower and region.mean_height < floor.upper:
-                    print("region {} assigned to floor {}".format(region.id, floor.id))
-                    region.floor_id = floor.id
-                    floor.regions.append(region)
-                    floor.objects.extend(region.objects)
-                    # Assign floor id to objects
-                    for region_obj in region.objects:
-                        self.objects[self.id2obj_idx[region_obj.id]].floor_id = floor.id
-            assert region.floor_id is not None
-            # based on region categorization into floors, take min/max heights to override floor heights
-        for floor_idx in range(self.num_floors):
-            self.floors[floor_idx].lower = np.mean([region.min_height for region in self.floors[floor_idx].regions])
-            self.floors[floor_idx].upper = np.mean([region.max_height for region in self.floors[floor_idx].regions])
-            print("updated means:", self.floors[floor_idx].lower, self.floors[floor_idx].upper)
+    def select_floor(self, floor: FloorBounds):
+        """Keep only mapped regions and objects whose geometry is on floor 0."""
+        selected = PanopticLevel(floor.floor_id, floor.lower, floor.upper)
+        for region in self.regions.values():
+            if not (floor.lower <= region.mean_height <= floor.upper):
+                continue
+            region.floor_id = floor.floor_id
+            selected.regions.append(region)
+            for obj in region.objects:
+                obj.floor_id = floor.floor_id
+                selected.objects.append(obj)
+        self.floors = {floor.floor_id: selected}
+        self.regions = {region.id: region for region in selected.regions}
 
     def write_metadata(self, save_dir):
         # write level information
@@ -311,7 +287,10 @@ class PanopticScene:
             region_item["objects"] = [obj.id for obj in region_obj.objects if obj.mapped]
             self.scene_info["regions"].append(region_item)
 
+        selected_object_ids = {obj.id for floor in self.floors.values() for obj in floor.objects}
         for obj in self.objects:
+            if obj.id not in selected_object_ids:
+                continue
             if obj.mapped:
                 object_item = {
                     "id": obj.id,
@@ -355,7 +334,7 @@ def read_camera_pose_hmp3d(file_path):
     return transformation_matrix
 
 
-def create_pcd_hmp3d(rgb, depth, camera_pose=None):
+def create_pcd_hmp3d(rgb, depth, camera_pose=None, hfov_degrees=90.0):
     """
     for habitat mp3d dataset, create point cloud from RGBD images
     params:
@@ -369,7 +348,7 @@ def create_pcd_hmp3d(rgb, depth, camera_pose=None):
     H = rgb.shape[0]
     W = rgb.shape[1]
 
-    hfov = 90 * np.pi / 180
+    hfov = float(hfov_degrees) * np.pi / 180
     vfov = 2 * math.atan(np.tan(hfov / 2) * H / W)
     fx = W / (2.0 * np.tan(hfov / 2.0))
     fy = H / (2.0 * np.tan(vfov / 2.0))
@@ -399,6 +378,46 @@ def create_pcd_hmp3d(rgb, depth, camera_pose=None):
     return pcd
 
 
+def crop_point_cloud_to_floor(point_cloud, floor: FloorBounds):
+    """Crop a world-coordinate point cloud to the selected floor's Y interval."""
+    points = np.asarray(point_cloud.points)
+    if not len(points):
+        return point_cloud
+    indices = np.flatnonzero((points[:, 1] >= floor.lower) & (points[:, 1] <= floor.upper)).tolist()
+    return point_cloud.select_by_index(indices)
+
+
+def rgb_colors_for_panoptic_points(rgb_pcd, panoptic_pcd):
+    """Return RGB colors aligned to panoptic points after independent voxelization."""
+    rgb_points = np.asarray(rgb_pcd.points)
+    panoptic_points = np.asarray(panoptic_pcd.points)
+    rgb_colors = np.asarray(rgb_pcd.colors)
+    if len(rgb_points) == len(panoptic_points) and np.allclose(rgb_points, panoptic_points):
+        return rgb_colors
+    if not len(rgb_points):
+        return np.zeros((len(panoptic_points), 3), dtype=float)
+    _, indices = cKDTree(rgb_points).query(panoptic_points, k=1)
+    return rgb_colors[indices]
+
+
+def update_object_geometry_from_points(obj, point_cloud) -> None:
+    """Replace source-wide boxes with boxes computed from floor-0 geometry."""
+    aabb = point_cloud.get_axis_aligned_bounding_box()
+    obj.aabb_center = np.asarray(aabb.get_center()).tolist()
+    obj.aabb_dims = np.asarray(aabb.get_extent()).tolist()
+    try:
+        obb = point_cloud.get_oriented_bounding_box()
+    except RuntimeError:
+        return
+    obj.obb_center = np.asarray(obb.center).tolist()
+    obj.obb_dims = np.asarray(obb.extent).tolist()
+    obj.obb_rotation = np.asarray(obb.R).tolist()
+    obj.obb_local_to_world = None
+    obj.obb_world_to_local = None
+    obj.obb_volume = float(np.prod(obb.extent))
+    obj.obb_half_extents = (np.asarray(obb.extent) / 2).tolist()
+
+
 def rgb2id(color):
     if isinstance(color, np.ndarray) and len(color.shape) == 3:
         if color.dtype == np.uint8:
@@ -423,34 +442,7 @@ def id2rgb(id_map):
     return color
 
 
-def validate_hm3dsem_inputs(dataset_dir, walks_path, split, scene_dir, scene_name):
-    raw_scene_dir = os.path.join(dataset_dir, split, scene_dir)
-    expected_paths = {
-        "Habitat scene mesh": os.path.join(raw_scene_dir, scene_name + ".basis.glb"),
-        "semantic labels": os.path.join(raw_scene_dir, scene_name + ".semantic.txt"),
-        "scene dataset config": os.path.join(dataset_dir, "hm3d_annotated_basis.scene_dataset_config.json"),
-        "walk RGB directory": os.path.join(walks_path, split, scene_dir, "rgb"),
-        "walk depth directory": os.path.join(walks_path, split, scene_dir, "depth"),
-        "walk semantic directory": os.path.join(walks_path, split, scene_dir, "semantic"),
-        "walk pose directory": os.path.join(walks_path, split, scene_dir, "pose"),
-    }
-    missing = [f"- {label}: {path}" for label, path in expected_paths.items() if not os.path.exists(path)]
-    if missing:
-        hint = (
-            "Expected the HM3DSEM raw dataset layout to look like:\n"
-            "  <raw_data_path>/hm3d_annotated_basis.scene_dataset_config.json\n"
-            "  <raw_data_path>/<split>/<scene_id>/<scene_name>.basis.glb\n"
-            "  <raw_data_path>/<split>/<scene_id>/<scene_name>.semantic.txt\n\n"
-            "If you are using the tarballs in this repo, extract them with:\n"
-            "  mkdir -p data/hm3d/val\n"
-            "  tar -xf data/hm3d-val-habitat-v0.2.tar -C data/hm3d/val\n"
-            "  tar -xf data/hm3d-val-semantic-annots-v0.2.tar -C data/hm3d/val\n"
-            "  tar -xf data/hm3d-val-semantic-configs-v0.2.tar -C data/hm3d\n"
-        )
-        raise FileNotFoundError("Missing HM3DSEM inputs:\n" + "\n".join(missing) + "\n\n" + hint)
-
-
-def parse_semantics(scene_dir, scene_mesh, txt_path, raw_scene_dir, dataset_dir, scene_name):
+def parse_semantics(scene_dir, scene_mesh, txt_path, raw_scene_dir, dataset_dir, scene_name, scene_config):
 
     sim_settings = {
         "scene": scene_mesh,
@@ -480,10 +472,7 @@ def parse_semantics(scene_dir, scene_mesh, txt_path, raw_scene_dir, dataset_dir,
         "scene_name": scene_name,
     }
 
-    sim_cfg = make_cfg(sim_settings, 
-                       dataset_dir, 
-                       raw_scene_dir,
-                       scene_name)
+    sim_cfg = make_cfg(sim_settings, dataset_dir, raw_scene_dir, scene_name, scene_config)
     sim = habitat_sim.Simulator(sim_cfg)
     scene = sim.semantic_scene
 
@@ -497,154 +486,179 @@ def parse_semantics(scene_dir, scene_mesh, txt_path, raw_scene_dir, dataset_dir,
         object_desc = line.strip().split(",")
         panoptic_object_list.append(PanopticObject(object_desc))
 
-    return PanopticScene(scene_dir, scene, panoptic_object_list)
+    return PanopticScene(scene_dir, scene, panoptic_object_list), sim
 
 
-@hydra.main(version_base=None, config_path="../../../config", config_name="create_graph")
-def main(params: DictConfig):
-    
-    dataset_dir = params.main.raw_data_path # raw HM3D dataset
-    walks_path = params.main.dataset_path # processed hm3dsem_walks dataset
+def parse_args():
+    parser = argparse.ArgumentParser(description="Create floor-0 HM3DSEM ground truth for all valid walk scenes.")
+    parser.add_argument("--dataset-dir", required=True, type=Path, help="Raw dataset root containing split directories")
+    parser.add_argument("--walks-dir", required=True, type=Path, help="Rendered walk-output root")
+    parser.add_argument("--split", action="append", dest="splits", help="Split directory to process; repeatable; defaults to all")
+    parser.add_argument("--scene-id", action="append", dest="scene_ids", help="Scene ID to process; repeatable; defaults to all")
+    parser.add_argument("--scene-config", type=Path, help="Explicit Habitat scene dataset config")
+    parser.add_argument("--floor-metadata", type=Path, help="Optional CSV with Scene Name and Separation Heights")
+    parser.add_argument("--region-votes", type=Path, help="Optional CSV with region vote labels")
+    parser.add_argument("--region-labels", type=Path, help="Optional CSV with manual region labels")
+    parser.add_argument("--hfov", type=float, default=90.0, help="Fallback horizontal field of view in degrees")
+    parser.add_argument("--voxel-size", type=float, default=0.02, help="Point-cloud voxel size in metres")
+    parser.add_argument("--frame-step", type=int, default=1, help="Use every Nth aligned frame")
+    return parser.parse_args()
 
-    split = params.main.split
-    scene_dir = params.main.scene_id
-    scene_name = scene_dir.split("-")[-1]
 
-    validate_hm3dsem_inputs(dataset_dir, walks_path, split, scene_dir, scene_name)
+def load_hfov(scene_dir: Path, fallback: float) -> float:
+    info_path = scene_dir / "camera_info.json"
+    if not info_path.is_file():
+        return fallback
+    try:
+        value = float(json.loads(info_path.read_text())["hfov_degrees"])
+        return value if 0 < value < 180 else fallback
+    except (OSError, ValueError, KeyError, json.JSONDecodeError):
+        return fallback
 
-    raw_scene_dir = "{}/{}/{}/".format(dataset_dir, split, scene_dir)
-    scene_mesh = os.path.join(raw_scene_dir, scene_name + ".glb")
-    panoptics_labels_file = os.path.join(raw_scene_dir, scene_name + ".semantic.txt")
-    panoptic_scene = parse_semantics(
-        scene_dir, scene_mesh, panoptics_labels_file, raw_scene_dir, dataset_dir, scene_name
-    )
 
-    rgb_image_path = os.path.join(walks_path, split, scene_dir, "rgb")
-    panoptic_image_path = os.path.join(walks_path, split, scene_dir, "semantic")
-    depth_image_path = os.path.join(walks_path, split, scene_dir, "depth")
-    camera_pose_file_path = os.path.join(walks_path, split, scene_dir, "pose")
+def validate_ground_truth_scene(scene, config):
+    missing = validate_raw_scene(scene, config, require_poses=False)
+    frames, frame_errors = discover_aligned_walk_frames(scene.walk_scene_dir)
+    return frames, missing + frame_errors
 
-    floor_labels_file_path = os.path.join(params.main.package_path, "data/hm3dsem/metadata/Per_Scene_Floor_Sep.csv")
 
-    region_votes_file_path = os.path.join(params.main.package_path, "data/hm3dsem/metadata/Per_Scene_Region_Weighted_Votes.csv")
-    region_labels_file_path = os.path.join(params.main.package_path, "data/hm3dsem/metadata/Per_Scene_Region_Labels.csv")
+def clear_derived_outputs(scene_dir: Path) -> None:
+    """Remove only artifacts owned by this generator before replacing them."""
+    for directory_name in ("objects", "regions"):
+        directory = scene_dir / directory_name
+        directory.mkdir(exist_ok=True)
+        for path in directory.glob("*.ply"):
+            path.unlink()
+    for filename in ("scene_rgb.ply", "scene_panoptic.ply", "scene_info.json", "semantic_label_map.csv"):
+        path = scene_dir / filename
+        if path.exists():
+            path.unlink()
 
-    # read rgb, depth, camera pose successively
-    all_rgb_image_files = os.listdir(rgb_image_path)
-    all_depth_image_files = os.listdir(depth_image_path)
-    all_pose_files = os.listdir(camera_pose_file_path)
 
-    all_rgb_image_files.sort()
-    all_depth_image_files.sort()
-    all_pose_files.sort()
+def process_scene(scene, args) -> bool:
+    config = resolve_scene_config(args.dataset_dir, scene.split, args.scene_config)
+    frames, missing = validate_ground_truth_scene(scene, config)
+    if missing:
+        LOG.warning("SKIPPED %s: %s", scene.scene_id, "; ".join(missing))
+        return False
+    if args.frame_step < 1:
+        LOG.warning("SKIPPED %s: --frame-step must be >= 1", scene.scene_id)
+        return False
 
-    rgb_pcd = o3d.geometry.PointCloud()
-    panoptic_pcd = o3d.geometry.PointCloud()
-    poses = []
+    sim = None
+    try:
+        panoptic_scene, sim = parse_semantics(
+            scene.scene_id,
+            str(scene.basis_mesh),
+            str(scene.semantic_annotations),
+            str(scene.raw_scene_dir),
+            str(args.dataset_dir),
+            scene.scene_name,
+            str(config),
+        )
+        floor = floor_bounds_from_metadata(args.floor_metadata, scene.scene_id)
+        if floor is None:
+            floor = floor_bounds_from_semantic_scene(panoptic_scene.scene, floor_id=0)
+        if floor is None:
+            LOG.warning("SKIPPED %s: floor 0 bounds are unavailable from metadata or Habitat semantic levels", scene.scene_id)
+            return False
 
-    num_point_clouds = 0
-    for i in tqdm(range(0, len(all_rgb_image_files), params.dataset.hm3dsem.gt_skip_frames), desc="Processing frames"):
-        file_name = all_rgb_image_files[i]
-        tqdm.write(file_name)
-        rgb = cv2.imread(os.path.join(rgb_image_path, file_name))
-        rgb = cv2.cvtColor(rgb, cv2.COLOR_BGR2RGB)
-
-        panoptic_ids = np.load(os.path.join(panoptic_image_path, file_name.replace("png", "npy")))
-        panoptic_rgb = np.zeros((panoptic_ids.shape[0], panoptic_ids.shape[1], 3), dtype=np.uint8)
-        for id, id_rgb in panoptic_scene.id2rgb.items():
-            panoptic_rgb[panoptic_ids == id, :] = id_rgb
-        # panoptic_image = Image.fromarray(panoptic_rgb) # as sanity check
-        # panoptic_image.save(os.path.join(walks_path, split, scene_dir, "panoptic", file_name))
-        depth = cv2.imread(os.path.join(depth_image_path, file_name), cv2.IMREAD_ANYDEPTH)
-        camera_pose = read_camera_pose_hmp3d(os.path.join(camera_pose_file_path, file_name.replace("png", "txt")))
-        poses.append(camera_pose[:3, 3])
-        frame_color_pcd = create_pcd_hmp3d(rgb, depth, camera_pose)
-        frame_panoptic_pcd = create_pcd_hmp3d(panoptic_rgb, depth, camera_pose)
-        rgb_pcd += frame_color_pcd
-        panoptic_pcd += frame_panoptic_pcd
-        num_point_clouds += 1
-
-        if num_point_clouds % 500 == 0:
-            # downsample point cloud
-            tqdm.write("--> downsampling point cloud")
-            rgb_pcd = rgb_pcd.voxel_down_sample(0.02)
-            panoptic_pcd = panoptic_pcd.voxel_down_sample(0.02)
-
-    # # plot camera trajectory
-    # pose_min_coord = np.min(np.array(poses))
-    # pose_max_coord = np.max(np.array(poses))
-    # plt.figure()
-    # plt.xlim(pose_min_coord, pose_max_coord)
-    # plt.ylim(pose_min_coord, pose_max_coord)
-    # plt.gca().invert_yaxis()
-    # plt.plot(np.array(poses)[:, 0], np.array(poses)[:, 2])
-    # plt.grid()
-    # plt.savefig(os.path.join(walks_path, split, scene_dir, "cam_trajectory.png"))
-
-    print("full_pcd:", len(rgb_pcd.points))
-    rgb_pcd = rgb_pcd.voxel_down_sample(0.02)
-    print("full_pcd after voxelization:", len(rgb_pcd.points))
-    # save point cloud and mesh
-    o3d.io.write_point_cloud(os.path.join(walks_path, split, scene_dir, "scene_rgb.ply"), rgb_pcd)
-
-    print("panoptic_pcd:", len(panoptic_pcd.points))
-    panoptic_pcd = panoptic_pcd.voxel_down_sample(0.02)
-    o3d.io.write_point_cloud(os.path.join(walks_path, split, scene_dir, "scene_panoptic.ply"), panoptic_pcd)
-    print("panoptic_pcd after voxelization:", len(panoptic_pcd.points))
-
-    # Go through panoptic point cloud and extract all points per object instance
-    # and save to separate point cloud file
-    if not os.path.exists(os.path.join(walks_path, split, scene_dir, "objects")):
-        os.makedirs(os.path.join(walks_path, split, scene_dir, "objects"))
-    if not os.path.exists(os.path.join(walks_path, split, scene_dir, "regions")):
-        os.makedirs(os.path.join(walks_path, split, scene_dir, "regions"))
-
-    pan_colors = np.asarray(panoptic_pcd.colors)  # * 255).astype(np.uint8)
-    for obj in panoptic_scene.objects:
-        id_filter = np.all(np.isclose(pan_colors - obj.rgb / 255.0, 0.0), axis=1)
-        print("Object ID: ", obj.id, "w/", np.sum(id_filter), "points")
-        obj_points = np.asarray(rgb_pcd.points)[id_filter, :]
-        obj_colors = np.asarray(rgb_pcd.colors)[id_filter, :]
-
-        if len(obj_points) > 0:
-            obj.mapped = True
-            # Add obj point cloud to objects and regions
-            panoptic_scene.objects[panoptic_scene.id2obj_idx[obj.id]].points = obj_points
-            panoptic_scene.objects[panoptic_scene.id2obj_idx[obj.id]].colors = obj_colors
-
-            obj_pcd = o3d.geometry.PointCloud()
-            obj_pcd.points = o3d.utility.Vector3dVector(obj_points)
-            obj_pcd.colors = o3d.utility.Vector3dVector(obj_colors)
-            o3d.io.write_point_cloud(
-                os.path.join(walks_path, split, scene_dir, "objects", "{}.ply".format(obj.id)), obj_pcd
+        frame_poses = [(frame, read_camera_pose_hmp3d(frame.pose)) for frame in frames]
+        non_floor_frames = [frame.stem for frame, pose in frame_poses if not pose_is_on_floor(pose, floor)]
+        if non_floor_frames:
+            LOG.warning(
+                "SKIPPED %s: walk contains %d non-floor-0 frames (%s); re-render with gen_hm3dsem_walks_from_poses.py",
+                scene.scene_id,
+                len(non_floor_frames),
+                ", ".join(non_floor_frames[:10]),
             )
-    panoptic_scene.construct_regions()
-    panoptic_scene.label_regions(region_votes_file_path, region_labels_file_path)
-    panoptic_scene.obtain_floor_separation_heights(floor_labels_file_path)
+            return False
 
-    # save region point clouds
-    for region in panoptic_scene.regions.values():
-        o3d.io.write_point_cloud(
-            os.path.join(walks_path, split, scene_dir, "regions", "{}.ply".format(region.id)),
-            region.region_point_cloud,
-        )
+        selected = frame_poses[:: args.frame_step]
+        if not selected:
+            LOG.warning("SKIPPED %s: no aligned floor-0 frames remain after --frame-step", scene.scene_id)
+            return False
+        clear_derived_outputs(scene.walk_scene_dir)
+        hfov = load_hfov(scene.walk_scene_dir, args.hfov)
+        rgb_pcd = o3d.geometry.PointCloud()
+        panoptic_pcd = o3d.geometry.PointCloud()
+        for index, (frame, camera_pose) in enumerate(tqdm(selected, desc=f"GT {scene.scene_id}", unit="frame")):
+            rgb = cv2.imread(str(frame.rgb), cv2.IMREAD_COLOR)
+            depth = cv2.imread(str(frame.depth), cv2.IMREAD_ANYDEPTH)
+            panoptic_ids = np.load(frame.semantic, allow_pickle=False)
+            if rgb is None or depth is None:
+                raise ValueError(f"unreadable RGB or depth frame: {frame.stem}")
+            if panoptic_ids.ndim != 2 or panoptic_ids.shape != depth.shape or rgb.shape[:2] != depth.shape:
+                raise ValueError(f"unaligned RGB/depth/semantic dimensions for frame {frame.stem}")
+            rgb = cv2.cvtColor(rgb, cv2.COLOR_BGR2RGB)
+            panoptic_rgb = np.zeros((*panoptic_ids.shape, 3), dtype=np.uint8)
+            for object_id, object_rgb in panoptic_scene.id2rgb.items():
+                panoptic_rgb[panoptic_ids == object_id] = object_rgb
+            rgb_pcd += crop_point_cloud_to_floor(create_pcd_hmp3d(rgb, depth, camera_pose, hfov), floor)
+            panoptic_pcd += crop_point_cloud_to_floor(create_pcd_hmp3d(panoptic_rgb, depth, camera_pose, hfov), floor)
+            if (index + 1) % 500 == 0:
+                rgb_pcd = rgb_pcd.voxel_down_sample(args.voxel_size)
+                panoptic_pcd = panoptic_pcd.voxel_down_sample(args.voxel_size)
 
-    for region in list(panoptic_scene.regions.values()):
-        print(
-            "floor",
-            region.floor_id,
-            "region",
-            region.id,
-            "# obj",
-            len([obj for obj in region.objects if obj.mapped]),
-            "min/max/mean r-height",
-            region.min_height,
-            region.max_height,
-            region.mean_height,
-        )
+        rgb_pcd = rgb_pcd.voxel_down_sample(args.voxel_size)
+        panoptic_pcd = panoptic_pcd.voxel_down_sample(args.voxel_size)
+        if not len(panoptic_pcd.points):
+            LOG.warning("SKIPPED %s: floor 0 produced no valid point-cloud points", scene.scene_id)
+            return False
+        o3d.io.write_point_cloud(str(scene.walk_scene_dir / "scene_rgb.ply"), rgb_pcd)
+        o3d.io.write_point_cloud(str(scene.walk_scene_dir / "scene_panoptic.ply"), panoptic_pcd)
 
-    # write meta data infos to JSON file
-    panoptic_scene.write_metadata(os.path.join(walks_path, split, scene_dir))
+        objects_dir = scene.walk_scene_dir / "objects"
+        regions_dir = scene.walk_scene_dir / "regions"
+        point_colors = rgb_colors_for_panoptic_points(rgb_pcd, panoptic_pcd)
+        pan_colors = np.asarray(panoptic_pcd.colors)
+        points = np.asarray(panoptic_pcd.points)
+        for obj in panoptic_scene.objects:
+            object_mask = np.all(np.isclose(pan_colors, obj.rgb / 255.0), axis=1)
+            if not np.any(object_mask):
+                continue
+            obj.mapped = True
+            obj.points = points[object_mask]
+            obj.colors = point_colors[object_mask]
+
+        panoptic_scene.construct_regions()
+        panoptic_scene.select_floor(floor)
+        panoptic_scene.label_regions(args.region_votes, args.region_labels)
+        selected_object_ids = {obj.id for floor_data in panoptic_scene.floors.values() for obj in floor_data.objects}
+        for obj in panoptic_scene.objects:
+            if obj.id not in selected_object_ids or not obj.mapped:
+                continue
+            object_pcd = o3d.geometry.PointCloud()
+            object_pcd.points = o3d.utility.Vector3dVector(obj.points)
+            object_pcd.colors = o3d.utility.Vector3dVector(obj.colors)
+            update_object_geometry_from_points(obj, object_pcd)
+            o3d.io.write_point_cloud(str(objects_dir / f"{obj.id}.ply"), object_pcd)
+        for region in panoptic_scene.regions.values():
+            o3d.io.write_point_cloud(str(regions_dir / f"{region.id}.ply"), region.region_point_cloud)
+        panoptic_scene.write_metadata(str(scene.walk_scene_dir))
+        generate_semantic_label_map(scene.walk_scene_dir, scene.semantic_annotations)
+        absent = missing_output_paths(scene.walk_scene_dir)
+        if absent:
+            raise RuntimeError("required outputs were not written: " + ", ".join(absent))
+        LOG.info("PROCESSED %s: %d aligned floor-0 frames and %d mapped objects", scene.scene_id, len(selected), len(panoptic_scene.scene_info["objects"]))
+        return True
+    except Exception as exc:
+        LOG.exception("FAILED %s: %s", scene.scene_id, exc)
+        return False
+    finally:
+        if sim is not None:
+            sim.close()
+
+
+def main():
+    args = parse_args()
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
+    scenes = discover_scene_paths(args.dataset_dir, args.walks_dir, splits=args.splits, scene_ids=args.scene_ids)
+    if not scenes:
+        LOG.error("No scene directories discovered under %s", args.dataset_dir)
+        return
+    succeeded = sum(process_scene(scene, args) for scene in scenes)
+    LOG.info("Ground-truth generation complete: %d processed, %d skipped or failed", succeeded, len(scenes) - succeeded)
 
 
 if __name__ == "__main__":
