@@ -19,13 +19,13 @@ from scipy.spatial import cKDTree
 
 from hovsg.data.hm3dsem.habitat_utils import make_cfg
 from hovsg.data.hm3dsem.preparation_utils import (
-    FloorBounds,
     discover_aligned_walk_frames,
     discover_scene_paths,
-    floor_bounds_from_metadata,
-    floor_bounds_from_semantic_scene,
+    floor_index_for_height,
+    floor_separations_from_camera_info,
+    floor_separations_from_metadata,
+    floor_separations_from_navmesh,
     missing_output_paths,
-    pose_is_on_floor,
     resolve_scene_config,
     validate_raw_scene,
 )
@@ -250,19 +250,43 @@ class PanopticScene:
             region_id = int(region_id)
         return self.regions[region_id]
     
-    def select_floor(self, floor: FloorBounds):
-        """Keep only mapped regions and objects whose geometry is on floor 0."""
-        selected = PanopticLevel(floor.floor_id, floor.lower, floor.upper)
-        for region in self.regions.values():
-            if not (floor.lower <= region.mean_height <= floor.upper):
+    def assign_regions_to_floors(self, separations):
+        """Distribute mapped regions and objects across every storey.
+
+        ``separations`` holds N+1 boundaries for N storeys.  A region belongs to
+        the storey containing its mean height; regions outside every storey
+        (annotation noise, roof geometry) are dropped rather than forced onto a
+        floor they do not belong to.
+        """
+        floor_count = len(separations) - 1
+        for floor_idx in range(floor_count):
+            self.floors[floor_idx] = PanopticLevel(floor_idx, separations[floor_idx], separations[floor_idx + 1])
+
+        unassigned = []
+        for region in list(self.regions.values()):
+            floor_idx = floor_index_for_height(region.mean_height, separations)
+            if floor_idx is None:
+                unassigned.append(region.id)
                 continue
-            region.floor_id = floor.floor_id
-            selected.regions.append(region)
-            for obj in region.objects:
-                obj.floor_id = floor.floor_id
-                selected.objects.append(obj)
-        self.floors = {floor.floor_id: selected}
-        self.regions = {region.id: region for region in selected.regions}
+            region.floor_id = floor_idx
+            floor = self.floors[floor_idx]
+            floor.regions.append(region)
+            floor.objects.extend(region.objects)
+            for region_obj in region.objects:
+                self.objects[self.id2obj_idx[region_obj.id]].floor_id = floor_idx
+        if unassigned:
+            LOG.warning("Regions outside every storey were dropped: %s", unassigned)
+        self.regions = {region.id: region for region in self.regions.values() if region.floor_id is not None}
+
+        # Replace the nominal boundaries with the extent of the regions actually
+        # on each storey, and drop storeys the walk never observed.
+        for floor_idx in list(self.floors):
+            regions = self.floors[floor_idx].regions
+            if not regions:
+                del self.floors[floor_idx]
+                continue
+            self.floors[floor_idx].lower = float(np.mean([region.min_height for region in regions]))
+            self.floors[floor_idx].upper = float(np.mean([region.max_height for region in regions]))
 
     def write_metadata(self, save_dir):
         # write level information
@@ -378,15 +402,6 @@ def create_pcd_hmp3d(rgb, depth, camera_pose=None, hfov_degrees=90.0):
     return pcd
 
 
-def crop_point_cloud_to_floor(point_cloud, floor: FloorBounds):
-    """Crop a world-coordinate point cloud to the selected floor's Y interval."""
-    points = np.asarray(point_cloud.points)
-    if not len(points):
-        return point_cloud
-    indices = np.flatnonzero((points[:, 1] >= floor.lower) & (points[:, 1] <= floor.upper)).tolist()
-    return point_cloud.select_by_index(indices)
-
-
 def rgb_colors_for_panoptic_points(rgb_pcd, panoptic_pcd):
     """Return RGB colors aligned to panoptic points after independent voxelization."""
     rgb_points = np.asarray(rgb_pcd.points)
@@ -401,7 +416,7 @@ def rgb_colors_for_panoptic_points(rgb_pcd, panoptic_pcd):
 
 
 def update_object_geometry_from_points(obj, point_cloud) -> None:
-    """Replace source-wide boxes with boxes computed from floor-0 geometry."""
+    """Replace source-wide boxes with boxes computed from the observed geometry."""
     aabb = point_cloud.get_axis_aligned_bounding_box()
     obj.aabb_center = np.asarray(aabb.get_center()).tolist()
     obj.aabb_dims = np.asarray(aabb.get_extent()).tolist()
@@ -490,7 +505,7 @@ def parse_semantics(scene_dir, scene_mesh, txt_path, raw_scene_dir, dataset_dir,
 
 
 def parse_args():
-    parser = argparse.ArgumentParser(description="Create floor-0 HM3DSEM ground truth for all valid walk scenes.")
+    parser = argparse.ArgumentParser(description="Create multi-storey HM3DSEM ground truth for all valid walk scenes.")
     parser.add_argument("--dataset-dir", required=True, type=Path, help="Raw dataset root containing split directories")
     parser.add_argument("--walks-dir", required=True, type=Path, help="Rendered walk-output root")
     parser.add_argument("--split", action="append", dest="splits", help="Split directory to process; repeatable; defaults to all")
@@ -556,27 +571,34 @@ def process_scene(scene, args) -> bool:
             scene.scene_name,
             str(config),
         )
-        floor = floor_bounds_from_metadata(args.floor_metadata, scene.scene_id)
-        if floor is None:
-            floor = floor_bounds_from_semantic_scene(panoptic_scene.scene, floor_id=0)
-        if floor is None:
-            LOG.warning("SKIPPED %s: floor 0 bounds are unavailable from metadata or Habitat semantic levels", scene.scene_id)
-            return False
-
-        frame_poses = [(frame, read_camera_pose_hmp3d(frame.pose)) for frame in frames]
-        non_floor_frames = [frame.stem for frame, pose in frame_poses if not pose_is_on_floor(pose, floor)]
-        if non_floor_frames:
+        # The annotated scenes carry authoritative separation heights; prefer
+        # them, then whatever the renderer recorded, then the navmesh.
+        separations = floor_separations_from_metadata(args.floor_metadata, scene.scene_id)
+        separation_source = f"metadata:{args.floor_metadata}"
+        if separations is None:
+            separations = floor_separations_from_camera_info(scene.walk_scene_dir)
+            separation_source = "camera_info.json"
+        if separations is None:
+            separations = floor_separations_from_navmesh(sim.pathfinder)
+            separation_source = "navmesh_height_histogram"
+        if separations is None:
             LOG.warning(
-                "SKIPPED %s: walk contains %d non-floor-0 frames (%s); re-render with gen_hm3dsem_walks_from_poses.py",
+                "SKIPPED %s: floor separation heights are unavailable from metadata, camera_info.json, or the navmesh",
                 scene.scene_id,
-                len(non_floor_frames),
-                ", ".join(non_floor_frames[:10]),
             )
             return False
+        LOG.info(
+            "%s: %d floor(s), separations %s from %s",
+            scene.scene_id,
+            len(separations) - 1,
+            [round(value, 3) for value in separations],
+            separation_source,
+        )
 
+        frame_poses = [(frame, read_camera_pose_hmp3d(frame.pose)) for frame in frames]
         selected = frame_poses[:: args.frame_step]
         if not selected:
-            LOG.warning("SKIPPED %s: no aligned floor-0 frames remain after --frame-step", scene.scene_id)
+            LOG.warning("SKIPPED %s: no aligned frames remain after --frame-step", scene.scene_id)
             return False
         clear_derived_outputs(scene.walk_scene_dir)
         hfov = load_hfov(scene.walk_scene_dir, args.hfov)
@@ -594,8 +616,10 @@ def process_scene(scene, args) -> bool:
             panoptic_rgb = np.zeros((*panoptic_ids.shape, 3), dtype=np.uint8)
             for object_id, object_rgb in panoptic_scene.id2rgb.items():
                 panoptic_rgb[panoptic_ids == object_id] = object_rgb
-            rgb_pcd += crop_point_cloud_to_floor(create_pcd_hmp3d(rgb, depth, camera_pose, hfov), floor)
-            panoptic_pcd += crop_point_cloud_to_floor(create_pcd_hmp3d(panoptic_rgb, depth, camera_pose, hfov), floor)
+            # The whole building is kept: cropping to one storey is what made
+            # multi-storey walks unusable.
+            rgb_pcd += create_pcd_hmp3d(rgb, depth, camera_pose, hfov)
+            panoptic_pcd += create_pcd_hmp3d(panoptic_rgb, depth, camera_pose, hfov)
             if (index + 1) % 500 == 0:
                 rgb_pcd = rgb_pcd.voxel_down_sample(args.voxel_size)
                 panoptic_pcd = panoptic_pcd.voxel_down_sample(args.voxel_size)
@@ -603,7 +627,7 @@ def process_scene(scene, args) -> bool:
         rgb_pcd = rgb_pcd.voxel_down_sample(args.voxel_size)
         panoptic_pcd = panoptic_pcd.voxel_down_sample(args.voxel_size)
         if not len(panoptic_pcd.points):
-            LOG.warning("SKIPPED %s: floor 0 produced no valid point-cloud points", scene.scene_id)
+            LOG.warning("SKIPPED %s: the walk produced no valid point-cloud points", scene.scene_id)
             return False
         o3d.io.write_point_cloud(str(scene.walk_scene_dir / "scene_rgb.ply"), rgb_pcd)
         o3d.io.write_point_cloud(str(scene.walk_scene_dir / "scene_panoptic.ply"), panoptic_pcd)
@@ -622,7 +646,7 @@ def process_scene(scene, args) -> bool:
             obj.colors = point_colors[object_mask]
 
         panoptic_scene.construct_regions()
-        panoptic_scene.select_floor(floor)
+        panoptic_scene.assign_regions_to_floors(separations)
         panoptic_scene.label_regions(args.region_votes, args.region_labels)
         selected_object_ids = {obj.id for floor_data in panoptic_scene.floors.values() for obj in floor_data.objects}
         for obj in panoptic_scene.objects:
@@ -640,7 +664,14 @@ def process_scene(scene, args) -> bool:
         absent = missing_output_paths(scene.walk_scene_dir)
         if absent:
             raise RuntimeError("required outputs were not written: " + ", ".join(absent))
-        LOG.info("PROCESSED %s: %d aligned floor-0 frames and %d mapped objects", scene.scene_id, len(selected), len(panoptic_scene.scene_info["objects"]))
+        LOG.info(
+            "PROCESSED %s: %d frames, %d floor(s), %d regions, %d mapped objects",
+            scene.scene_id,
+            len(selected),
+            len(panoptic_scene.scene_info["levels"]),
+            len(panoptic_scene.scene_info["regions"]),
+            len(panoptic_scene.scene_info["objects"]),
+        )
         return True
     except Exception as exc:
         LOG.exception("FAILED %s: %s", scene.scene_id, exc)
@@ -656,9 +687,13 @@ def main():
     scenes = discover_scene_paths(args.dataset_dir, args.walks_dir, splits=args.splits, scene_ids=args.scene_ids)
     if not scenes:
         LOG.error("No scene directories discovered under %s", args.dataset_dir)
-        return
+        raise SystemExit(1)
     succeeded = sum(process_scene(scene, args) for scene in scenes)
-    LOG.info("Ground-truth generation complete: %d processed, %d skipped or failed", succeeded, len(scenes) - succeeded)
+    failed = len(scenes) - succeeded
+    LOG.info("Ground-truth generation complete: %d processed, %d skipped or failed", succeeded, failed)
+    # A skipped or failed scene must be visible to the caller's exit status.
+    if failed:
+        raise SystemExit(1)
 
 
 if __name__ == "__main__":

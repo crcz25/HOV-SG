@@ -5,7 +5,11 @@ done
 # Run scene graph creation for each scene
 cd /workspace/HOV-SG && python application/create_graph.py main.dataset=hm3dsem main.dataset_path=/workspace/HOV-SG/data/hm3dsem_walks main.split=val main.scene_id=00824-Dd4bFSTQ8gi main.save_path=/workspace/HOV-SG/data/scene_graphs
 
-TxQKHP@b1S
-
-
 bash zip_scene_graphs.sh hm3dsem/00824-Dd4bFSTQ8gi
+
+# Run all via the bash script, which will skip the README evaluation scenes unless --include-excluded is specified.
+cd /workspace/HOV-SG
+mkdir -p outputs/hm3dsem_preparation
+
+nohup ./scripts/process_hm3dsem_excluding_readme_eval.sh --all --include-excluded --force \
+  > outputs/hm3dsem_preparation/rerun.log 2>&1 &

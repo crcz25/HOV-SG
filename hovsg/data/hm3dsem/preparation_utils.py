@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import ast
 import csv
+import json
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, Sequence
@@ -25,6 +26,7 @@ class ScenePaths:
     raw_scene_dir: Path
     scene_name: str
     basis_mesh: Path
+    navmesh: Path
     semantic_mesh: Path
     semantic_annotations: Path
     pose_file: Path | None
@@ -101,6 +103,7 @@ def discover_scene_paths(
                     raw_scene_dir=raw_scene_dir,
                     scene_name=scene_name,
                     basis_mesh=raw_scene_dir / f"{scene_name}.basis.glb",
+                    navmesh=raw_scene_dir / f"{scene_name}.basis.navmesh",
                     semantic_mesh=raw_scene_dir / f"{scene_name}.semantic.glb",
                     semantic_annotations=raw_scene_dir / f"{scene_name}.semantic.txt",
                     pose_file=pose_file,
@@ -120,7 +123,9 @@ def resolve_scene_config(dataset_dir: str | Path, split: str, explicit_path: str
     return (split_candidates or candidates or [None])[0]
 
 
-def validate_raw_scene(scene: ScenePaths, scene_config: Path | None, require_poses: bool) -> list[str]:
+def validate_raw_scene(
+    scene: ScenePaths, scene_config: Path | None, require_poses: bool, require_navmesh: bool = False
+) -> list[str]:
     """Return precise missing source-data labels for a scene."""
     requirements: list[tuple[str, Path | None]] = [
         ("Habitat basis mesh (.basis.glb)", scene.basis_mesh),
@@ -130,6 +135,8 @@ def validate_raw_scene(scene: ScenePaths, scene_config: Path | None, require_pos
     ]
     if require_poses:
         requirements.append(("trajectory pose file", scene.pose_file))
+    if require_navmesh:
+        requirements.append(("navigation mesh (.basis.navmesh)", scene.navmesh))
     return [f"{label}: {path}" for label, path in requirements if path is None or not path.is_file()]
 
 
@@ -160,8 +167,53 @@ def load_pose_matrices(pose_file: Path) -> list[np.ndarray]:
     ]
 
 
-def floor_bounds_from_metadata(metadata_path: str | Path | None, scene_id: str, floor_id: int = 0) -> FloorBounds | None:
-    """Read ``Scene Name,Separation Heights`` metadata when it is supplied."""
+
+
+def walkable_levels_from_heights(
+    heights: Sequence[float] | np.ndarray,
+    bin_size: float = 0.05,
+    min_share: float = 0.04,
+    merge_distance: float = 0.5,
+) -> list[float]:
+    """Return ascending walkable-plane heights from a navmesh height sample.
+
+    Storeys appear as dense modes in the height histogram because a floor is a
+    large flat navigable area, whereas a staircase spreads few samples over a
+    wide height range.  Clustering by nearest-neighbour gaps instead merges
+    storeys through their connecting stairs, so bins are thresholded on their
+    share of the sample first and only then merged.
+    """
+    values = np.asarray(heights, dtype=float)
+    values = values[np.isfinite(values)]
+    if values.size == 0:
+        return []
+    lowest, highest = float(values.min()), float(values.max())
+    bin_count = max(1, int(np.ceil((highest - lowest) / bin_size)) + 1)
+    counts, edges = np.histogram(values, bins=bin_count, range=(lowest, lowest + bin_count * bin_size))
+    dense = np.flatnonzero(counts >= max(1.0, min_share * values.size))
+    if not dense.size:
+        return [float(np.median(values))]
+    groups: list[list[int]] = [[int(dense[0])]]
+    for index in dense[1:]:
+        if (index - groups[-1][-1]) * bin_size <= merge_distance:
+            groups[-1].append(int(index))
+        else:
+            groups.append([int(index)])
+    levels = []
+    for group in groups:
+        weights = counts[group].astype(float)
+        centres = edges[group] + bin_size / 2
+        levels.append(float((centres * weights).sum() / weights.sum()))
+    return levels
+
+
+def floor_separations_from_metadata(metadata_path: str | Path | None, scene_id: str) -> list[float] | None:
+    """Read the full ordered ``Separation Heights`` list for a scene.
+
+    ``N`` boundaries describe ``N-1`` storeys: floor ``i`` spans
+    ``heights[i]``..``heights[i+1]``.  This is the authoritative multi-storey
+    annotation for the scenes that ship one.
+    """
     if metadata_path is None:
         return None
     path = Path(metadata_path)
@@ -173,31 +225,80 @@ def floor_bounds_from_metadata(metadata_path: str | Path | None, scene_id: str, 
                 if row.get("Scene Name") != scene_id:
                     continue
                 heights = ast.literal_eval(row.get("Separation Heights", ""))
-                if not isinstance(heights, (list, tuple)) or len(heights) <= floor_id + 1:
+                if not isinstance(heights, (list, tuple)) or len(heights) < 2:
                     return None
-                lower, upper = float(heights[floor_id]), float(heights[floor_id + 1])
-                if lower >= upper:
+                values = [float(height) for height in heights]
+                if any(later <= earlier for earlier, later in zip(values, values[1:])):
                     return None
-                return FloorBounds(floor_id, lower, upper, f"metadata:{path}")
+                return values
     except (OSError, csv.Error, SyntaxError, ValueError, TypeError):
         return None
     return None
 
 
-def floor_bounds_from_semantic_scene(semantic_scene: object, floor_id: int = 0) -> FloorBounds | None:
-    """Derive bounds from Habitat's semantic level with the requested ID."""
-    for level in getattr(semantic_scene, "levels", []):
-        if int(getattr(level, "id", -1)) != floor_id:
-            continue
-        aabb = getattr(level, "aabb", None)
-        if aabb is None:
-            continue
-        center = np.asarray(aabb.center, dtype=float)
-        size = np.asarray(aabb.sizes if hasattr(aabb, "sizes") else aabb.size, dtype=float)
-        lower, upper = float(center[1] - size[1] / 2), float(center[1] + size[1] / 2)
-        if lower < upper:
-            return FloorBounds(floor_id, lower, upper, "habitat_semantic_level")
+def floor_separations_from_navmesh(
+    pathfinder: object,
+    samples: int = 8000,
+    seed: int = 42,
+    floor_margin: float = 0.30,
+    default_ceiling: float = 3.0,
+) -> list[float] | None:
+    """Derive ``Separation Heights`` for a scene that has no annotation.
+
+    Uses the same walkable-plane detection and the same margin below each plane
+    that reproduces the annotated boundaries to within about 0.2 m.
+    """
+    levels = walkable_levels_from_pathfinder(pathfinder, samples=samples, seed=seed)
+    if not levels:
+        return None
+    separations = [level - floor_margin for level in levels]
+    top = levels[-1] + default_ceiling
+    try:
+        top = min(top, float(np.asarray(pathfinder.get_bounds()[1], dtype=float)[1]))
+    except Exception:
+        pass
+    if top <= separations[-1]:
+        top = separations[-1] + default_ceiling
+    separations.append(top)
+    return separations
+
+
+def floor_separations_from_camera_info(scene_dir: str | Path) -> list[float] | None:
+    """Reuse the separations the renderer recorded for an existing walk."""
+    info_path = Path(scene_dir) / "camera_info.json"
+    if not info_path.is_file():
+        return None
+    try:
+        values = [float(height) for height in json.loads(info_path.read_text())["floor_separations"]]
+    except (OSError, ValueError, TypeError, KeyError, json.JSONDecodeError):
+        return None
+    if len(values) < 2 or any(later <= earlier for earlier, later in zip(values, values[1:])):
+        return None
+    return values
+
+
+def walkable_levels_from_pathfinder(pathfinder: object, samples: int = 8000, seed: int = 42) -> list[float]:
+    """Sample navigable heights and reduce them to walkable-plane heights."""
+    if pathfinder is None or not getattr(pathfinder, "is_loaded", False):
+        return []
+    try:
+        pathfinder.seed(seed)
+        heights = np.array(
+            [float(np.asarray(pathfinder.get_random_navigable_point(), dtype=float)[1]) for _ in range(samples)]
+        )
+    except Exception:  # Habitat raises bare RuntimeErrors for unusable navmeshes.
+        return []
+    return walkable_levels_from_heights(heights)
+
+
+def floor_index_for_height(height: float, separations: Sequence[float]) -> int | None:
+    """Return the storey containing ``height``, or None when it is outside."""
+    for index in range(len(separations) - 1):
+        if separations[index] <= height <= separations[index + 1]:
+            return index
     return None
+
+
 
 
 def pose_is_on_floor(pose: np.ndarray, floor: FloorBounds, tolerance: float = 1e-4) -> bool:

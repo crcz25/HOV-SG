@@ -176,9 +176,9 @@ We used the following scenes from the Habitat Matterport 3D Semantics dataset in
 
 #### Automatic walk and ground-truth preparation
 
-The preparation scripts discover scene directories automatically; no scene IDs, repository-relative paths, or per-scene configuration edits are required. A raw scene is eligible for rendering when it contains exactly one `*.basis.glb` mesh and the matching `*.semantic.glb` and `*.semantic.txt` files, the dataset root contains a `*.scene_dataset_config.json`, and a matching trajectory exists at `<pose_dir>/<scene_id>.txt`. A trajectory file contains one whitespace-separated 4×4 camera-to-world matrix per line.
+The preparation scripts discover scene directories automatically; no scene IDs, repository-relative paths, or per-scene configuration edits are required. A raw scene is eligible for rendering when it contains exactly one `*.basis.glb` mesh, a matching `*.basis.navmesh`, matching `*.semantic.glb` and `*.semantic.txt` files, and the dataset root contains a `*.scene_dataset_config.json`. A trajectory file at `<pose_dir>/<scene_id>.txt` contains one whitespace-separated 4×4 camera-to-world matrix per line. A supplied trajectory always wins and is rendered in full; a scene without one gets a deterministic whole-building coverage trajectory synthesized from the navmesh, except for the fixed eight-scene evaluation exclusion set in the renderer, where a missing trajectory is reported as a data error instead.
 
-The walk renderer validates every discovered scene, reports every unavailable source file, and continues after a skipped or failed scene. It writes only floor `0`: poses outside the first-floor Y bounds are omitted before RGB, depth, semantic, and pose files are written. Bounds come from an optional `Scene Name,Separation Heights` CSV; otherwise the Habitat semantic level whose ID is `0` is used. The output records this selection in `camera_info.json`.
+The walk renderer validates every discovered scene, reports every unavailable source file, and continues after a skipped or failed scene. Walks span every storey of the building, which is what HOV-SG's hierarchical multi-story graphs are built from. Synthesized trajectories sample targets per storey so a multi-storey scene is covered evenly, and the camera is placed one sensor height above the navmesh, clamped inside the storey it stands on. The storey boundaries used are recorded in `camera_info.json`.
 
 ```bash
 python hovsg/data/hm3dsem/gen_hm3dsem_walks_from_poses.py \
@@ -190,7 +190,9 @@ python hovsg/data/hm3dsem/gen_hm3dsem_walks_from_poses.py \
 
 Use `--split <name>` or repeat `--scene-id <id>` to restrict discovery, and use `--dry-run` to report validity without rendering. Existing scene output is preserved unless `--overwrite` is given.
 
-Ground-truth compilation validates that RGB, depth, semantic, and pose directories have the same non-empty frame stems before processing. It rejects walks containing any non-floor-0 pose, crops every generated point cloud to floor `0`, and writes only floor-0 objects, regions, and scene metadata. Region vote and manual-label CSVs are optional enrichments; raw semantic object and region IDs remain authoritative.
+Generated trajectory coverage is controlled with `--trajectory-step`, `--trajectory-targets`, `--max-trajectory-poses`, and `--trajectory-seed`. Pass `--no-generate-missing-poses` to require externally supplied trajectories instead.
+
+Ground-truth compilation validates that RGB, depth, semantic, and pose directories have the same non-empty frame stems before processing. It assigns every mapped region to the storey containing its mean height, then replaces the nominal storey boundaries with the extent of the regions actually observed there, and writes objects, regions, and scene metadata for every storey. Region vote and manual-label CSVs are optional enrichments; raw semantic object and region IDs remain authoritative.
 
 When supplied, floor metadata must contain `Scene Name` and `Separation Heights` columns, where the latter is an ordered list of floor boundaries. Region-vote metadata uses `Scene Name`, `Region #`, and `Weighted Room Proposal`; manual region metadata uses `Scene Name`, `Region #`, and `Region Category`. Missing optional region metadata leaves those category fields empty but does not remove the raw object or region annotations.
 
@@ -204,6 +206,25 @@ python hovsg/data/hm3dsem/create_hm3dsem_walks_gt.py \
 ```
 
 Each completed `<walks_dir>/<split>/<scene_id>` contains the aligned `rgb/`, `depth/`, `semantic/`, and `pose/` frame directories, plus `objects/`, `regions/`, `scene_rgb.ply`, `scene_panoptic.ply`, `scene_info.json`, and `semantic_label_map.csv`. Frame names retain the existing `<scene_name>_<zero-padded-index>` convention; `camera_info.json` is additional metadata used to preserve camera intrinsics and the selected floor. A failure in any one scene does not prevent the remaining discovered scenes from being processed.
+
+Storey boundaries (`Separation Heights`: N+1 boundaries describe N storeys) are resolved from the `Scene Name,Separation Heights` CSV first, then `camera_info.json`, then a histogram of navigable heights from the navmesh. The CSV covers only the ten manually annotated scenes, and no HM3DSEM scene populates Habitat semantic levels, so the navmesh estimator is the operative source everywhere else; scored against the CSV it reproduces the annotated boundaries to within about 0.2 m.
+
+#### Batch preparation
+
+`scripts/process_hm3dsem_excluding_readme_eval.sh` drives both stages one scene at a time, so a per-scene failure is attributable and does not abort the rest of the run. The eight README evaluation scenes are excluded from bulk discovery but are processed when named explicitly.
+
+```bash
+# One scene
+scripts/process_hm3dsem_excluding_readme_eval.sh 00824-Dd4bFSTQ8gi
+
+# A selected list of scenes
+scripts/process_hm3dsem_excluding_readme_eval.sh 00800-TEEsavR23oF 00802-wcojb4TFT35
+
+# Every eligible validation scene except the eight README evaluation scenes
+scripts/process_hm3dsem_excluding_readme_eval.sh --all
+```
+
+Outputs that validate as complete are skipped so an interrupted run can be resumed; pass `--force` to regenerate them and `--dry-run` to report the plan without writing. Use `--conda-env` when the interpreter is not already on `PATH`, and `--max-frames` to bound synthesized trajectories. The script never reads or writes `config/create_graph.yaml`; it verifies the file is unchanged at exit.
 
 To evaluate semantic segmentation cababilities, we used [ScanNet](http://www.scan-net.org/) and [Replica](https://github.com/facebookresearch/Replica-Dataset).
 ### ScanNet
@@ -259,17 +280,24 @@ The Data folder should have the following structure:
 │   ├── val
 │   │   ├── 00824-Dd4bFSTQ8gi
 │   │   │   ├── depth
-│   │   │   │   ├── Dd4bFSTQ8gi-000000.png
+│   │   │   │   ├── Dd4bFSTQ8gi_000000.png      # uint16, millimetres
 │   │   │   │   ├── ...
 │   │   │   ├── rgb
-│   │   │   │   ├── Dd4bFSTQ8gi-000000.png
+│   │   │   │   ├── Dd4bFSTQ8gi_000000.png
 │   │   │   │   ├── ...
 │   │   │   ├── semantic
-│   │   │   │   ├── Dd4bFSTQ8gi-000000.png
+│   │   │   │   ├── Dd4bFSTQ8gi_000000.npy      # uint32 instance IDs
 │   │   │   │   ├── ...
 │   │   │   ├── pose
-│   │   │   │   ├── Dd4bFSTQ8gi-000000.png
+│   │   │   │   ├── Dd4bFSTQ8gi_000000.txt      # flattened 4x4 camera-to-world
 │   │   │   │   ├── ...
+│   │   │   ├── objects                          # <object_id>.ply, all storeys
+│   │   │   ├── regions                          # <region_id>.ply, all storeys
+│   │   │   ├── camera_info.json
+│   │   │   ├── scene_info.json                  # floor / region / object GT
+│   │   │   ├── scene_panoptic.ply
+│   │   │   ├── scene_rgb.ply
+│   │   │   ├── semantic_label_map.csv
 |   |   ├── 00829-QaLdnwvtxbs
 |   |   ├── ..
 ├── Replica
