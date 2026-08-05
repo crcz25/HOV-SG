@@ -49,6 +49,9 @@ class PanopticObject:
         self.rgb = np.array(ImageColor.getcolor("#" + self.hex, "RGB"))
         self.type = "object"
         self.mapped = False
+        # Whether the annotation could be matched to Habitat geometry in the
+        # complete semantic scene, independently of the rendered walk.
+        self.habitat_matched = False
 
         # habitat object info
         self.aabb_center = None
@@ -92,6 +95,69 @@ def habitat_attr_value(value):
     if hasattr(value, "__iter__") and not isinstance(value, (str, bytes)):
         return [habitat_attr_value(item) for item in value]
     return value
+
+
+def is_finite_vector(value, size=3):
+    """Return whether ``value`` is a finite numeric vector of ``size`` entries."""
+    if value is None:
+        return False
+    try:
+        array = np.asarray(habitat_attr_value(value), dtype=float)
+    except (TypeError, ValueError):
+        return False
+    return array.shape == (size,) and bool(np.isfinite(array).all())
+
+
+def object_centroid(obj):
+    """Return the representative world position of an object.
+
+    Observed objects use the mean of their mapped points, which is the geometry
+    the walk actually saw.  Unobserved objects fall back to the complete-scene
+    OBB centre and then to its AABB centre, since no point cloud exists for
+    them.  The same value drives the height-based floor fallback.
+    """
+    points = getattr(obj, "points", None)
+    if points is not None and len(points):
+        return np.mean(np.asarray(points, dtype=float), axis=0).tolist()
+    for box_center in (obj.obb_center, obj.aabb_center):
+        if is_finite_vector(box_center):
+            return [float(value) for value in np.asarray(habitat_attr_value(box_center), dtype=float)]
+    return None
+
+
+def has_complete_box_geometry(obj):
+    """Return whether both boxes of an object are exportable 3-D extents."""
+    return all(
+        is_finite_vector(value)
+        for value in (obj.aabb_center, obj.aabb_dims, obj.obb_center, obj.obb_dims)
+    )
+
+
+def serialize_object(obj):
+    """Serialize one object for ``scene_info.json``.
+
+    Shared by the trajectory-visible ``objects`` collection and the
+    complete-scene ``all_objects`` collection so both stay identical field for
+    field; ``observed_in_walk`` is the only thing that distinguishes them.
+    """
+    return {
+        "id": obj.id,
+        "category": obj.category,
+        "hex": obj.hex,
+        "region_id": obj.region_id,
+        "floor_id": obj.floor_id,
+        "observed_in_walk": bool(obj.mapped),
+        "centroid": object_centroid(obj),
+        "aabb_center": obj.aabb_center,
+        "aabb_dims": obj.aabb_dims,
+        "obb_center": obj.obb_center,
+        "obb_dims": obj.obb_dims,
+        "obb_rotation": obj.obb_rotation,
+        "obb_local_to_world": obj.obb_local_to_world,
+        "obb_world_to_local": obj.obb_world_to_local,
+        "obb_volume": obj.obb_volume,
+        "obb_half_extents": obj.obb_half_extents,
+    }
 
 
 def rgb2hex(color_array):
@@ -167,7 +233,10 @@ class PanopticScene:
         self.regions = defaultdict(PanopticRegion)
         self.floors = defaultdict(PanopticLevel)
 
-        self.scene_info = {"levels": [], "regions": [], "objects": []}
+        self.scene_info = {"levels": [], "regions": [], "objects": [], "all_objects": []}
+        # Population statistics of the complete semantic scene, reported once the
+        # walk has been mapped.
+        self.habitat_object_count = 0
 
         self.id2obj_idx = {}
         for i, obj in enumerate(self.objects):
@@ -186,7 +255,17 @@ class PanopticScene:
         self.append_habitat_infos()
 
     def append_habitat_infos(self):
+        """Copy complete-scene Habitat geometry onto the annotated objects.
+
+        Every object of the semantic scene is visited, not only the ones the
+        walk observed, so unobserved annotations still carry their source AABB
+        and OBB.
+        """
         for obj in self.scene.objects:
+            if obj is None:
+                LOG.warning("Ignoring an empty Habitat semantic object slot")
+                continue
+            self.habitat_object_count += 1
             try:
                 obj_id = int(str(obj.id).rsplit("_", maxsplit=1)[1])
             except (IndexError, ValueError):
@@ -194,15 +273,29 @@ class PanopticScene:
                 continue
 
             if obj_id in self.id2obj_idx:
-                self.objects[self.id2obj_idx[obj_id]].aabb_center = habitat_attr_value(obj.aabb.center)
-                self.objects[self.id2obj_idx[obj_id]].aabb_dims = habitat_attr_value(obj.aabb.size)
-                self.objects[self.id2obj_idx[obj_id]].obb_center = habitat_attr_value(obj.obb.center)
-                self.objects[self.id2obj_idx[obj_id]].obb_dims = habitat_attr_value(obj.obb.sizes)
-                self.objects[self.id2obj_idx[obj_id]].obb_rotation = habitat_attr_value(obj.obb.rotation)
-                self.objects[self.id2obj_idx[obj_id]].obb_local_to_world = habitat_attr_value(obj.obb.local_to_world)
-                self.objects[self.id2obj_idx[obj_id]].obb_world_to_local = habitat_attr_value(obj.obb.world_to_local)
-                self.objects[self.id2obj_idx[obj_id]].obb_volume = habitat_attr_value(obj.obb.volume)
-                self.objects[self.id2obj_idx[obj_id]].obb_half_extents = habitat_attr_value(obj.obb.half_extents)
+                panoptic_object = self.objects[self.id2obj_idx[obj_id]]
+                panoptic_object.aabb_center = habitat_attr_value(obj.aabb.center)
+                panoptic_object.aabb_dims = habitat_attr_value(obj.aabb.size)
+                panoptic_object.obb_center = habitat_attr_value(obj.obb.center)
+                panoptic_object.obb_dims = habitat_attr_value(obj.obb.sizes)
+                panoptic_object.obb_rotation = habitat_attr_value(obj.obb.rotation)
+                panoptic_object.obb_local_to_world = habitat_attr_value(obj.obb.local_to_world)
+                panoptic_object.obb_world_to_local = habitat_attr_value(obj.obb.world_to_local)
+                panoptic_object.obb_volume = habitat_attr_value(obj.obb.volume)
+                panoptic_object.obb_half_extents = habitat_attr_value(obj.obb.half_extents)
+                panoptic_object.habitat_matched = has_complete_box_geometry(panoptic_object)
+                if not panoptic_object.habitat_matched:
+                    LOG.warning(
+                        "Habitat geometry for semantic object %s is incomplete or non-finite", obj_id
+                    )
+
+        unmatched = sorted(obj.id for obj in self.objects if not obj.habitat_matched)
+        if unmatched:
+            LOG.warning(
+                "%d semantic annotation entries have no valid Habitat geometry: %s",
+                len(unmatched),
+                ", ".join(str(obj_id) for obj_id in unmatched[:20]) + (" ..." if len(unmatched) > 20 else ""),
+            )
 
     def get_object(self, key):
         if isinstance(key, str):
@@ -288,6 +381,49 @@ class PanopticScene:
             self.floors[floor_idx].lower = float(np.mean([region.min_height for region in regions]))
             self.floors[floor_idx].upper = float(np.mean([region.max_height for region in regions]))
 
+    def assign_remaining_object_floors(self, separations):
+        """Give every remaining annotated object a storey, or leave it unset.
+
+        ``assign_regions_to_floors`` only reaches objects that the walk observed,
+        because it works through regions reconstructed from observed points.  An
+        object that was never observed still has an annotated region and a
+        complete-scene position, so its storey is recovered from the storey of
+        its own region first and from its centroid height second.  Nothing is
+        guessed: an object that matches neither is reported and left unassigned.
+        """
+        region_floors = {
+            int(region.id): region.floor_id for region in self.regions.values() if region.floor_id is not None
+        }
+        from_region, from_height, unassigned = 0, 0, []
+        for obj in self.objects:
+            if obj.floor_id is not None:
+                continue
+            region_floor = region_floors.get(int(obj.region_id))
+            if region_floor is not None:
+                obj.floor_id = region_floor
+                from_region += 1
+                continue
+            centroid = object_centroid(obj)
+            floor_idx = floor_index_for_height(centroid[1], separations) if centroid is not None else None
+            if floor_idx is None:
+                unassigned.append(obj.id)
+                continue
+            obj.floor_id = floor_idx
+            from_height += 1
+        if from_region or from_height:
+            LOG.info(
+                "Floors recovered for %d unassigned object(s): %d from their annotated region, %d from their height",
+                from_region + from_height,
+                from_region,
+                from_height,
+            )
+        if unassigned:
+            LOG.warning(
+                "%d object(s) keep floor_id=null: neither their annotated region nor their height falls on a storey: %s",
+                len(unassigned),
+                ", ".join(str(obj_id) for obj_id in unassigned[:20]) + (" ..." if len(unassigned) > 20 else ""),
+            )
+
     def write_metadata(self, save_dir):
         # write level information
         for floor_idx, floor_obj in self.floors.items():
@@ -311,30 +447,27 @@ class PanopticScene:
             region_item["objects"] = [obj.id for obj in region_obj.objects if obj.mapped]
             self.scene_info["regions"].append(region_item)
 
+        # "objects" keeps its meaning: the trajectory-visible objects that the
+        # HOV-SG evaluator consumes, each backed by an <id>.ply point cloud.
+        # "all_objects" is a superset holding every annotated object of the
+        # complete semantic scene, observed or not, and is evaluation-only
+        # metadata that no HOV-SG graph stage reads.
         selected_object_ids = {obj.id for floor in self.floors.values() for obj in floor.objects}
+        skipped = []
         for obj in self.objects:
-            if obj.id not in selected_object_ids:
+            if not (obj.mapped or obj.habitat_matched):
+                skipped.append(obj.id)
                 continue
-            if obj.mapped:
-                object_item = {
-                    "id": obj.id,
-                    "category": obj.category,
-                    "hex": obj.hex,
-                    "region_id": obj.region_id,
-                    "floor_id": obj.floor_id,
-                    "aabb_center": obj.aabb_center,
-                    "aabb_dims": obj.aabb_dims,
-                    "obb_center": obj.obb_center,
-                    "obb_dims": obj.obb_dims,
-                    "obb_rotation": obj.obb_rotation,
-                    "obb_local_to_world": obj.obb_local_to_world,
-                    "obb_world_to_local": obj.obb_world_to_local,
-                    "obb_volume": obj.obb_volume,
-                    "obb_half_extents": obj.obb_half_extents,
-                    # "points": obj.points.tolist(),
-                    # "colors": object.colors.tolist(),
-                }
+            object_item = serialize_object(obj)
+            self.scene_info["all_objects"].append(object_item)
+            if obj.mapped and obj.id in selected_object_ids:
                 self.scene_info["objects"].append(object_item)
+        if skipped:
+            LOG.warning(
+                "%d annotated object(s) excluded from all_objects: never observed and without valid Habitat geometry: %s",
+                len(skipped),
+                ", ".join(str(obj_id) for obj_id in skipped[:20]) + (" ..." if len(skipped) > 20 else ""),
+            )
 
         # save scene info as JSON
         with open(os.path.join(save_dir, "scene_info.json"), "w") as file:
@@ -647,6 +780,9 @@ def process_scene(scene, args) -> bool:
 
         panoptic_scene.construct_regions()
         panoptic_scene.assign_regions_to_floors(separations)
+        # Objects the walk never saw have no region point cloud, so their storey
+        # is recovered separately before the metadata is written.
+        panoptic_scene.assign_remaining_object_floors(separations)
         panoptic_scene.label_regions(args.region_votes, args.region_labels)
         selected_object_ids = {obj.id for floor_data in panoptic_scene.floors.values() for obj in floor_data.objects}
         for obj in panoptic_scene.objects:
@@ -664,6 +800,7 @@ def process_scene(scene, args) -> bool:
         absent = missing_output_paths(scene.walk_scene_dir)
         if absent:
             raise RuntimeError("required outputs were not written: " + ", ".join(absent))
+        all_objects = panoptic_scene.scene_info["all_objects"]
         LOG.info(
             "PROCESSED %s: %d frames, %d floor(s), %d regions, %d mapped objects",
             scene.scene_id,
@@ -671,6 +808,16 @@ def process_scene(scene, args) -> bool:
             len(panoptic_scene.scene_info["levels"]),
             len(panoptic_scene.scene_info["regions"]),
             len(panoptic_scene.scene_info["objects"]),
+        )
+        LOG.info(
+            "%s complete-scene GT: %d Habitat semantic objects, %d annotation entries, "
+            "%d in all_objects (%d observed in the walk), %d without a floor",
+            scene.scene_id,
+            panoptic_scene.habitat_object_count,
+            len(panoptic_scene.objects),
+            len(all_objects),
+            sum(item["observed_in_walk"] for item in all_objects),
+            sum(item["floor_id"] is None for item in all_objects),
         )
         return True
     except Exception as exc:
