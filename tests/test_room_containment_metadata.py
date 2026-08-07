@@ -12,25 +12,19 @@ def test_room_containment_metadata_round_trip(tmp_path, monkeypatch):
     source = Room("0_0", "0", name="room_0")
     source.pcd = object()
     source.vertices = np.zeros((4, 2))
-    source.class_containment_belief = {0: 0.8, 2: 0.4}
-    source.class_containment_belief_correlated_limit = {0: 0.8, 2: 0.3}
+    source.class_containment_belief = [
+        {"class_id": 0, "class_label": "chair", "belief": 0.8},
+        {"class_id": 2, "class_label": "lamp", "belief": 0.4},
+    ]
     source.save(tmp_path)
 
     saved_metadata = json.loads((tmp_path / "0_0.json").read_text(encoding="utf-8"))
-    assert saved_metadata["class_containment_belief"] == {"0": 0.8, "2": 0.4}
-    assert saved_metadata["class_containment_belief_correlated_limit"] == {
-        "0": 0.8,
-        "2": 0.3,
-    }
+    assert saved_metadata["class_containment_belief"] == source.class_containment_belief
 
     restored = Room("0_0", "0")
     restored.load(str(tmp_path))
 
     assert restored.class_containment_belief == source.class_containment_belief
-    assert (
-        restored.class_containment_belief_correlated_limit
-        == source.class_containment_belief_correlated_limit
-    )
 
 
 def test_room_metadata_without_beliefs_defaults_to_empty(tmp_path, monkeypatch):
@@ -51,5 +45,4 @@ def test_room_metadata_without_beliefs_defaults_to_empty(tmp_path, monkeypatch):
     restored = Room("0_0", "0")
     restored.load(str(tmp_path))
 
-    assert restored.class_containment_belief == {}
-    assert restored.class_containment_belief_correlated_limit == {}
+    assert restored.class_containment_belief == []

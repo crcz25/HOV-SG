@@ -36,8 +36,7 @@ class Room:
         self.room_zero_level = None  # Zero level of the room
         self.represent_images = []  # 5 images that represent the appearance of the room
         self.object_counter = 0
-        self.class_containment_belief = {}
-        self.class_containment_belief_correlated_limit = {}
+        self.class_containment_belief = []
 
     def add_object(self, objectt):
         """
@@ -311,42 +310,39 @@ class Room:
                 continue
             objects_by_class[int(label_idx)].append(objectt)
 
-        beliefs = {}
-        correlated_limits = {}
+        beliefs = []
         for class_idx, objects in objects_by_class.items():
             groups = self.merge_object_groups(objects, merge_threshold)
             group_probabilities = [
                 max(float(np.clip(objectt.p_obj, 0.0, 1.0)) for objectt in group)
                 for group in groups
             ]
-            correlated_limit = float(max(group_probabilities))
+            anchor_probability = float(max(group_probabilities))
             # This is algebraically the noisy-OR product, evaluated from its
-            # maximum term so the lower-bound assertion is exact in floating
-            # point as well as in real arithmetic.
-            belief = correlated_limit
+            # maximum term so the calculation is exact in floating point as
+            # well as in real arithmetic.
+            belief = anchor_probability
             max_consumed = False
             for probability in group_probabilities:
-                if probability == correlated_limit and not max_consumed:
+                if probability == anchor_probability and not max_consumed:
                     max_consumed = True
                     continue
                 belief += (1.0 - belief) * probability
             belief = float(np.clip(belief, 0.0, 1.0))
-            assert belief >= correlated_limit, (
-                f"Noisy-OR belief {belief} is below correlated limit "
-                f"{correlated_limit} for class {class_idx} in room {self.room_id}"
+            assert belief >= anchor_probability, (
+                f"Noisy-OR belief {belief} is below its maximum component "
+                f"{anchor_probability} for class {class_idx} in room {self.room_id}"
             )
-            beliefs[class_idx] = belief
-            correlated_limits[class_idx] = correlated_limit
+            beliefs.append(
+                {
+                    "class_id": class_idx,
+                    "class_label": objects[0].name,
+                    "belief": belief,
+                }
+            )
 
         self.class_containment_belief = beliefs
-        self.class_containment_belief_correlated_limit = correlated_limits
         return beliefs
-
-    @staticmethod
-    def _stringify_belief_keys(beliefs):
-        if beliefs is None:
-            return None
-        return {str(class_idx): float(prob) for class_idx, prob in beliefs.items()}
 
     def save(self, path):
         """
@@ -366,12 +362,7 @@ class Room:
             "room_zero_level": self.room_zero_level,
             "embeddings": [i.tolist() for i in self.embeddings],
             "represent_images": self.represent_images,
-            "class_containment_belief": self._stringify_belief_keys(
-                self.class_containment_belief
-            ),
-            "class_containment_belief_correlated_limit": self._stringify_belief_keys(
-                self.class_containment_belief_correlated_limit
-            ),
+            "class_containment_belief": self.class_containment_belief,
         }
         with open(os.path.join(path, str(self.room_id) + ".json"), "w") as outfile:
             json.dump(metadata, outfile)
@@ -393,12 +384,9 @@ class Room:
             self.room_zero_level = metadata["room_zero_level"]
             self.embeddings = [np.asarray(i) for i in metadata["embeddings"]]
             self.represent_images = metadata["represent_images"]
-            for field in (
-                "class_containment_belief",
-                "class_containment_belief_correlated_limit",
-            ):
-                raw_beliefs = metadata.get(field, {})
-                setattr(self, field, {int(k): float(v) for k, v in raw_beliefs.items()})
+            self.class_containment_belief = metadata.get(
+                "class_containment_belief", []
+            )
 
     def __str__(self):
         return f"Room ID: {self.room_id}, Name: {self.name}, Floor ID: {self.floor_id}, Objects: {len(self.objects)}"
