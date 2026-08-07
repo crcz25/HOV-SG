@@ -92,6 +92,15 @@ def test_all_objects_is_a_superset_of_the_visible_objects(tmp_path):
     assert [obj["observed_in_walk"] for obj in all_objects] == [True, False, False, False]
 
 
+def test_regions_export_the_mean_of_their_reconstructed_world_points(tmp_path):
+    scene = make_scene()
+    scene.write_metadata(str(tmp_path))
+
+    region = json.loads((tmp_path / "scene_info.json").read_text())["regions"][0]
+    assert region["centroid"] == pytest.approx([1.0666666, 1.0, 1.0666666])
+    assert len(region["centroid"]) == 3
+
+
 def test_unobserved_objects_take_a_floor_from_their_region_then_their_height(tmp_path):
     scene = make_scene()
     scene.write_metadata(str(tmp_path))

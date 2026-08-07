@@ -687,6 +687,7 @@ class Graph:
                 name="room_" + str(room_index),
             )
             room.pcd = room_pcds[i]
+            room.update_centroid()
             room.vertices = room_2d_points[i]
             self.floors[int(floor.floor_id)].add_room(room)
             room.room_height = floor_height

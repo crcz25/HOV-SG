@@ -178,6 +178,10 @@ class PanopticRegion:
         self.min_height = None
         self.max_height = None
         self.mean_height = None
+        # ``region_points`` are reconstructed directly in Habitat world
+        # coordinates (see ``read_camera_pose_hmp3d``).  Keep the centroid in
+        # that same frame so it is comparable to a HOV-SG room centroid.
+        self.centroid = None
         self.region_points = None
         self.bev_region_points = None
 
@@ -189,6 +193,7 @@ class PanopticRegion:
         self.min_height = np.min(self.region_points[:, 1])
         self.max_height = np.max(self.region_points[:, 1])
         self.mean_height = np.mean(self.region_points[:, 1])
+        self.centroid = np.mean(self.region_points, axis=0).tolist()
 
         # project region point cloud to xz plane and use min height as region height
         self.region_point_cloud = o3d.geometry.PointCloud()
@@ -437,6 +442,7 @@ class PanopticScene:
             region_item = {
                 "id": region_id,
                 "floor_id": region_obj.floor_id,
+                "centroid": region_obj.centroid,
                 "voted_category": region_obj.voted_category,
                 "category": region_obj.category,
                 "min_height": region_obj.min_height,

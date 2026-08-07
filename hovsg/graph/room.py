@@ -32,6 +32,10 @@ class Room:
         self.vertices = []  # indices of the room in the point cloud 8 vertices
         self.embeddings = []  # List of tensors of embeddings of the room
         self.pcd = None  # Point cloud of the room
+        # Mean of the final world-frame room point cloud.  It is populated
+        # when room segmentation assigns the point cloud and persisted with
+        # the room node.
+        self.centroid = None
         self.room_height = None  # Height of the room
         self.room_zero_level = None  # Zero level of the room
         self.represent_images = []  # 5 images that represent the appearance of the room
@@ -44,6 +48,23 @@ class Room:
         :param objectt: Object object to be added to the room
         """
         self.objects.append(objectt)  # Method to add objects to the room
+
+    def update_centroid(self):
+        """Compute this room's geometric centroid in map/world coordinates.
+
+        ``self.pcd`` is selected from ``Graph.full_pcd`` without a final
+        coordinate transform.  Averaging its points therefore preserves the
+        Habitat world frame shared with the HM3D-Sem ground-truth regions.
+        """
+        if self.pcd is None:
+            raise ValueError(f"Room {self.room_id} has no point cloud")
+        points = np.asarray(self.pcd.points, dtype=float)
+        if points.ndim != 2 or points.shape[1] != 3 or not len(points):
+            raise ValueError(f"Room {self.room_id} has no valid 3-D points")
+        if not np.isfinite(points).all():
+            raise ValueError(f"Room {self.room_id} contains non-finite points")
+        self.centroid = np.mean(points, axis=0).tolist()
+        return self.centroid
 
     def set_txt_embeddings(self, text):
         self.embeddings.append(get_text_feats_multiple_templates(text))
@@ -349,6 +370,10 @@ class Room:
         Save the room in folder as ply for the point cloud
         and json for the metadata
         """
+        # Segmenting a room computes this eagerly, but keep direct Room users
+        # on the same geometry-derived serialization path.
+        if self.centroid is None:
+            self.update_centroid()
         # save the point cloud
         o3d.io.write_point_cloud(os.path.join(path, str(self.room_id) + ".ply"), self.pcd)
         # save the metadata
@@ -356,6 +381,7 @@ class Room:
             "room_id": self.room_id,
             "name": self.name,
             "floor_id": self.floor_id,
+            "centroid": self.centroid,
             "objects": [obj.object_id for obj in self.objects],
             "vertices": self.vertices.tolist(),
             "room_height": self.room_height,
@@ -379,6 +405,7 @@ class Room:
             metadata = json.load(json_file)
             self.name = metadata["name"]
             self.floor_id = metadata["floor_id"]
+            self.centroid = metadata["centroid"]
             self.vertices = np.asarray(metadata["vertices"])
             self.room_height = metadata["room_height"]
             self.room_zero_level = metadata["room_zero_level"]
