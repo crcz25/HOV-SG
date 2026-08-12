@@ -39,11 +39,14 @@ def test_recompute_uses_existing_assignment_without_changing_name():
     assert obj.label_cos_sim == pytest.approx(1.0)
     assert obj.runner_up_idx == 1
     assert obj.semantic_margin == pytest.approx(1.0)
-    assert obj.vocab_log_partition == pytest.approx(np.log(np.exp(1.0) + 1.0))
-    assert obj.negative_log_partition == pytest.approx(0.0)
-    assert obj.p_mem == pytest.approx(
-        1.0 / (1.0 + np.exp(-np.log(np.exp(1.0) + 1.0)))
+    # |C| = 2 with cosines 1 and 0, |N| = 1 with cosine 0, so the size-normalized
+    # likelihoods are (e + 1) / 2 and 1.
+    assert obj.vocab_log_likelihood == pytest.approx(
+        np.log((np.exp(1.0) + 1.0) / 2.0)
     )
+    assert obj.negative_log_likelihood == pytest.approx(0.0)
+    likelihood_c = (np.exp(1.0) + 1.0) / 2.0
+    assert obj.p_mem == pytest.approx(likelihood_c / (likelihood_c + 1.0))
 
 
 def test_recompute_does_not_guess_missing_legacy_label_index():
@@ -70,8 +73,25 @@ def test_recompute_does_not_guess_missing_legacy_label_index():
     assert obj.semantic_margin is None
     assert obj.p_sem is None
     assert obj.u_sem is None
-    assert obj.vocab_log_partition == pytest.approx(np.log(np.exp(1.0) + 1.0))
-    assert obj.negative_log_partition == pytest.approx(0.0)
-    assert obj.p_mem == pytest.approx(
-        1.0 / (1.0 + np.exp(-np.log(np.exp(1.0) + 1.0)))
+    # |C| = 2 with cosines 1 and 0, |N| = 1 with cosine 0, so the size-normalized
+    # likelihoods are (e + 1) / 2 and 1.
+    assert obj.vocab_log_likelihood == pytest.approx(
+        np.log((np.exp(1.0) + 1.0) / 2.0)
     )
+    assert obj.negative_log_likelihood == pytest.approx(0.0)
+    likelihood_c = (np.exp(1.0) + 1.0) / 2.0
+    assert obj.p_mem == pytest.approx(likelihood_c / (likelihood_c + 1.0))
+
+
+def test_identify_object_labels_a_valid_embedding_with_zero_scores():
+    """All-zero similarities do not imply that the visual embedding is invalid."""
+    graph = SimpleNamespace(label_text_feats_normalized=None)
+    name, label_idx, similarity = Graph.identify_object(
+        graph,
+        np.array([0.0, 0.0, 1.0]),
+        np.array([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]]),
+        ["chair", "table"],
+    )
+
+    np.testing.assert_allclose(similarity, [0.0, 0.0])
+    assert (name, label_idx) == ("chair", 0)

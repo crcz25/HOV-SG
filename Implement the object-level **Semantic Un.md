@@ -1,36 +1,27 @@
-# Object semantic confidence and uncertainty
+# Object-level uncertainty signals
 
-The scene-graph builder stores semantic confidence and semantic uncertainty on
-each `Object`. The signal is based on the margin between the assigned label and
-the strongest semantically distinct competitor in the configured vocabulary.
+Each `Object` stores the five confidence signals from `uncertainty_signals.tex`
+and their complementary uncertainties:
 
-For an object embedding `e`, `compute_semantic_margin_uncertainty()` computes
-cosine similarities to the text vocabulary, selects the assigned label's
-similarity, and compares it with the best eligible competitor. The configured
-logit scale maps that margin through a sigmoid:
+- `p_det`, `u_det`: SAM's pooled `predicted_iou` and `1 - p_det`.
+- `p_sem`, `u_sem`: `sigmoid(alpha * m)` for the best non-synonym text-label
+  margin and its complement.
+- `p_coh`, `u_coh`: the corresponding leave-one-out visual-prototype margin.
+- `p_mem`, `u_mem`: the size-normalized vocabulary-vs-negative likelihood
+  posterior and its complement.
+- `p_view`, `u_view`: the rescaled mean pairwise cosine of the accumulated
+  unit view embeddings and its complement.
 
-```text
-c_sem = sigmoid(logit_scale * (assigned_similarity - competitor_similarity))
-u_sem = 1 - c_sem
-```
+The label-error estimators are kept separately and combined only for the
+object-level probability as `p_sem_bar = min(p_sem, p_coh)`; an undefined
+coherence signal reduces this to `p_sem`. Undefined evidence is stored as
+`None`, never as a fabricated endpoint probability.
 
-Zero-norm embeddings produce `c_sem = 0` and `u_sem = 1`. If no distinct
-competitor is eligible, the assigned label is treated as fully confident.
+`Object.save()` and `Object.load()` persist each signal and the raw detection
+and cross-view accumulators needed to reproduce the derived values. Signal
+calculation is refreshed by `Graph.recompute_cross_view_consistency()` and
+`Graph.recompute_semantic_uncertainty()` before the graph is serialized.
 
-`Object.save()` and `Object.load()` persist the semantic fields used by the
-implementation: `label_idx`, `label_cos_sim`, `runner_up_idx`,
-`runner_up_cos_sim`, `semantic_margin`, `c_sem`, and `u_sem`. There is no
-separate vocabulary-wide uncertainty value or compatibility distribution.
-
-Object embeddings are normalized after feature aggregation and after object
-merges. Merging clears the semantic fields that depend on the embedding;
-`Graph.recompute_semantic_uncertainty()` repopulates them after the final merge
-pass without changing the assigned label.
-
-The relevant configuration values are
+The shared `alpha` and synonym threshold `tau` are configured by
 `semantic_uncertainty_logit_scale` and
-`semantic_uncertainty_synonym_threshold` under `pipeline` in
-`config/create_graph.yaml`.
-
-Tests cover the margin helper, zero-norm behavior, metadata round trips,
-post-merge recomputation, and assignment stability.
+`semantic_uncertainty_synonym_threshold` in `config/create_graph.yaml`.

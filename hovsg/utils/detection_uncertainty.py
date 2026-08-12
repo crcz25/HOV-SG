@@ -65,13 +65,10 @@ def object_confidence_sum_from_points(
 ):
     """Return the point-confidence ``(sum, count)`` for one object point cloud.
 
-    P_det is the mean SAM ``predicted_iou`` over the object's points. Keeping
-    the sum and the count -- rather than only their ratio -- is what makes the
-    aggregation correct under merges: two merged objects add their sums and
-    counts, giving the exact pooled mean over the union of their points,
-    independently of merge order. Averaging two already-averaged means instead
-    weights a chain of merges by 1/2, 1/4, 1/8, ..., which is what the previous
-    implementation did in :meth:`hovsg.graph.object.Object.__add__`.
+    P_det is the mean SAM ``predicted_iou`` over the object's points. The sum
+    and the count are returned separately -- rather than only their ratio --
+    so the object node stores the raw evidence and P_det can be recomputed
+    from it, in particular after a graph is reloaded from disk.
     """
     points = np.asarray(points)
     if points.size == 0:

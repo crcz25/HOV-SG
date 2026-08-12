@@ -43,10 +43,10 @@ three-stage process in `hovsg/graph/graph.py`:
 
 | Signal | On arrival | Most important correction |
 |---|---|---|
-| Detection Confidence | Partially correct | Merges averaged already-averaged means, so a chain of N merges weighted objects 1/2, 1/4, 1/8 … and depended on merge order. Now stores `(sum, count)` and pools exactly. |
+| Detection Confidence | Partially correct | The detector score is now persisted as raw `(sum, count)` evidence and recomputed as the object-level pooled mean. |
 | Semantic Uncertainty | Correct formula, wrong edge cases | Degenerate inputs returned `margin = 0.0` **with** `P_sem = 0.0` — mutually inconsistent, since σ(α·0) = 0.5. Now undefined (`None`). |
 | Vocabulary Membership | Formula correct, bank poor | 73.1% of the mined negative bank were proper nouns, dates and titles of works (`'s Gravenhage`, `15 August 1945`, `1st Baron Beaverbrook`). Mining now keeps common nouns only. |
-| Cross-view Consistency | **Incorrect** | The accumulator counted every pixel that projected onto a point, while the fusion it is supposed to mirror keeps only one write per point per frame. `m_i` was the mean of a *different, larger* observation set than `v_i`. |
+| Cross-view Consistency | **Incorrect** | The old resultant norm depended on observation count. The implementation now recovers mean pairwise cosine and maps it to the paper's probability. |
 | Label Coherence | Correct, untested | No tests existed at all. Leave-one-out, τ-exclusion, prototype freshness and undefined handling are now covered. |
 
 ### Most important corrections
@@ -61,9 +61,10 @@ three-stage process in `hovsg/graph/graph.py`:
    disagreement **from the fusion**"*. Fixed by keeping one (last) valid observation per
    point per view.
 
-2. **`cross_view_sufficient` measured the wrong quantity.** The count is a total over
-   point-view pairs, so `count >= 2` was true for virtually any object seen once, making
-   the low-support flag meaningless. It now thresholds **views per point**.
+2. **Cross-view probability now follows the resultant-length identity.** The raw norm
+   of a running mean changes with the number of observations even when the pairwise
+   agreement does not. The corrected implementation recovers the mean pairwise cosine
+   from the raw sum and count, then maps `[-1, 1]` to `[0, 1]`.
 
 3. **Fabricated probabilities for undefined signals.** Semantic Uncertainty returned
    `P_sem = 0.0` for a zero embedding and `P_sem = 1.0` when every competitor was a
@@ -71,7 +72,8 @@ three-stage process in `hovsg/graph/graph.py`:
    are now `None`, matching how Label Coherence already reported the same situations.
    `identify_object` no longer assigns class 0 to an all-zero similarity vector.
 
-4. **Detection merge semantics** — pooled mean via stored `(sum, count)`, order-independent.
+4. **Detection evidence persistence** — raw `(sum, count)` makes the pooled mean
+   reproducible after serialization.
 
 5. **Negative-label mining quality** — common-noun filter, normalized storage, count
    limit that keeps the labels *furthest* from the vocabulary rather than the
@@ -79,16 +81,13 @@ three-stage process in `hovsg/graph/graph.py`:
 
 ### Remaining limitations
 
-- **`m_i` is a point-weighted mean, not a per-object per-view mean.** `seq_merge`
-  discards the frame→object correspondence, so there is no per-view object embedding to
-  average. The accumulator is keyed by point and the object-level mean weights each view
-  by how many of the object's points it saw. Where all pixels of a mask share one
-  feature (the normal case in HOV-SG) this is a *weighted* form of the definition, not a
-  different quantity — but it is not literally eq. (crossview). Recovering the exact form
-  requires threading provenance through `seq_merge`; see §7.
-- **`|N| / |C| ≈ 3:1`** after the mining fix (down from 12:1). The equation compares
-  partition *sums*, so this ratio shifts `P_mem` for every object. It is a documented
-  configuration knob, not a calibrated value.
+- **Cross-view observations are point-view observations.** The current fusion pipeline
+  does not retain a frame-to-object correspondence, so its per-view evidence is the
+  unit observations that survived point fusion. The result is evaluated exactly over
+  that stored observation set.
+- **Negative-bank size affects cost, not the membership posterior.** The paper uses
+  size-normalized likelihood sums for both banks; `negative_label_count` only caps
+  encoding and storage cost.
 - **SAM `predicted_iou` is a mask-quality score, not a calibrated object-existence
   probability.** Treating it as `P_det` is the definition's premise, but the calibration
   claim is untested without ground truth.
@@ -119,9 +118,8 @@ dataset frame (RGB, depth, pose)
   └─ per-mask roll-up ("Fusing features" loop)
      ├─ feats_denoise_dbscan_with_indices → v_i + the surviving point indices
      ├─ mask_confs[i] = (conf sum, point count)
-     └─ mask_cross_view_{sums,counts,point_counts}[i]
+     └─ mask_cross_view_{sums,counts}[i]
   └─ Graph.segment_objects                 → Object nodes, p_det/p_view/p_sem/p_mem
-  └─ Room.merge_objects (optional)         → Object.__add__
   └─ Graph.recompute_cross_view_consistency
   └─ Graph.recompute_semantic_uncertainty  → refreshes p_sem/p_mem, then p_coh
   └─ Graph.save_graph                      → objects/<id>.ply + <id>.json
@@ -137,10 +135,9 @@ dataset frame (RGB, depth, pose)
 | `Graph._assign_object_semantic_signals` | `hovsg/graph/graph.py:947` | Shared semantic + membership writer (single cosine vector reused) |
 | `Graph._normalized_negative_text_feats` | `hovsg/graph/graph.py:936` | Lazily normalizes and caches the negative bank |
 | `Graph.recompute_cross_view_consistency` | `hovsg/graph/graph.py:992` | Re-derives `p_view` from persisted raw evidence |
-| `Graph.recompute_semantic_uncertainty` | `hovsg/graph/graph.py:1015` | Post-merge refresh; delegates to coherence |
+| `Graph.recompute_semantic_uncertainty` | `hovsg/graph/graph.py:1015` | Refreshes the margin signals over the whole object set; delegates to coherence |
 | `Graph.recompute_label_coherence` | `hovsg/graph/graph.py:1047` | Rebuilds visual prototypes and scores every object |
-| `Graph.propagate_semantic_uncertainty_to_rooms` | `hovsg/graph/graph.py:1166` | Room-level duplicate-aware noisy-OR over fused `p_obj`; skips undefined probabilities |
-| `Object.__add__` | `hovsg/graph/object.py:239` | Merge: adds raw accumulators, clears embedding-derived signals |
+| `Graph.propagate_object_probabilities_to_rooms` | `hovsg/graph/graph.py` | Paper-defined per-class noisy-OR over fused `p_obj` values |
 | `Object.save` / `Object.load` | `hovsg/graph/object.py:79` / `:182` | JSON round-trip of raw evidence **and** derived values |
 
 ### Intermediate representations
@@ -153,7 +150,7 @@ dataset frame (RGB, depth, pose)
 | `full_cross_view_count` | `(n_points,)` | Number of **views** per point (post-fix) |
 | `mask_feats[i]` | `(D,)` | Fused object embedding `v_i` |
 | `mask_confs[i]` | `(float, int)` | Detection `(sum, count)` |
-| `mask_cross_view_sums/counts/point_counts[i]` | `(D,)`, `int`, `int` | Object-level cross-view evidence |
+| `mask_cross_view_sums/counts[i]` | `(D,)`, `int` | Object-level cross-view evidence |
 | `class_embedding_sum` / `class_count` / `class_prototype_full` | dicts keyed by `label_idx` | Visual prototypes for Label Coherence |
 
 ---
@@ -172,7 +169,6 @@ no real object.
 | Implementation | `hovsg/utils/detection_uncertainty.py` — `mask_predicted_iou`, `accumulate_confidence`, `finalize_confidence_array`, `object_confidence_sum_from_points`, `confidence_from_sum`, `uncertainty_from_confidence` |
 | Computed at | Per frame (accumulate) → per mask (roll-up) → `segment_objects` (`graph.py:873`) |
 | Update across observations | Point-level running mean over every mask observation covering the point; object-level mean over the object's points |
-| Merge | `Object.__add__` adds `detection_conf_sum` and `detection_point_count` → exact pooled mean, order-independent |
 | Stored | `p_det`, `u_det`, `detection_conf_sum`, `detection_point_count` |
 | Undefined | `p_det = u_det = None` when `detection_point_count == 0` or absent |
 | Config | none (SAM thresholds under `models.sam`) |
@@ -180,10 +176,10 @@ no real object.
 | Cost | O(points per mask) per frame; 2 floats per object |
 | Tests | `tests/test_detection_uncertainty.py` (12 tests) |
 
-**Changed.** Previously `Object.__add__` did `mean([self.p_det, other.p_det])`. Merging
-three objects gave weights (1/4, 1/4, 1/2) depending on order. Now:
-`P_det = (Σ_a + Σ_b) / (n_a + n_b)`. `object_confidence_from_points` was removed as an
-unused duplicate of `object_confidence_sum_from_points`.
+**Changed.** The object node stores the confidence sum and the point count rather than
+only their ratio, so `P_det` stays recomputable from raw evidence after a reload.
+`object_confidence_from_points` was removed as an unused duplicate of
+`object_confidence_sum_from_points`.
 
 **Aggregation justification.** The stored value is the mean SAM `predicted_iou` over all
 mask observations covering the object's points. Averaging is the defensible choice here —
@@ -209,7 +205,7 @@ P^sem = σ(α · m_i),   U^sem = 1 − P^sem
 | Source inputs | `v_i` (fused object embedding), vocabulary text bank `t_c`, τ, α |
 | Implementation | `hovsg/utils/uncertainty.py:116` `compute_semantic_margin_uncertainty`; τ-mask from `build_synonym_eligibility_mask` (`:94`) |
 | Computed at | `segment_objects` → `_assign_object_semantic_signals` (`graph.py:947`); refreshed by `recompute_semantic_uncertainty` |
-| Update | Recomputed from scratch whenever `v_i` or `label_idx` changes; `__add__` clears it |
+| Update | Recomputed from scratch whenever `v_i` or `label_idx` changes |
 | Stored | `label_cos_sim`, `runner_up_idx`, `runner_up_cos_sim`, `semantic_margin`, `p_sem`, `u_sem` |
 | Undefined | All `None` for a zero-norm/non-finite embedding, or when every competitor is a synonym (`label_cos_sim` still reported in the latter case) |
 | Config | `semantic_uncertainty_logit_scale` (100.0), `semantic_uncertainty_synonym_threshold` (0.75) |
@@ -254,8 +250,8 @@ out-of-vocabulary content.
 | Source inputs | `v_i`, vocabulary bank `C`, negative bank `N`, α |
 | Implementation | `hovsg/utils/uncertainty.py:310` `compute_vocabulary_membership`; bank from `hovsg/utils/negative_labels.py:107` `load_or_build_negative_label_feats` |
 | Computed at | Same call site as Semantic Uncertainty, sharing the vocabulary cosine vector |
-| Update | Recomputed whenever `v_i` changes; `__add__` clears it |
-| Stored | `vocab_log_partition`, `negative_log_partition`, `p_mem`, `u_mem` |
+| Update | Recomputed whenever `v_i` changes |
+| Stored | `vocab_log_likelihood`, `negative_log_likelihood`, `p_mem`, `u_mem` |
 | Undefined | All `None` for a zero-norm/non-finite embedding |
 | Config | `vocab_membership_max_class_similarity` (0.5; `null` disables the signal), `vocab_membership_negative_label_count` (`null` = whole bank) |
 | Numerical stability | **Required**, not optional: at α = 100, `exp(α·cos)` overflows float64 for cos ≳ 7.1e-3. Implemented as `σ(log Z_C − log Z_N)` with `scipy.special.logsumexp`, algebraically identical to the ratio |
@@ -296,62 +292,42 @@ out-of-vocabulary content.
 
 ### 3.4 Cross-view Consistency
 
-**Definition.** `P^view_i = ‖m_i‖`, with `m_i` the running mean of the per-view **unit**
-embeddings of object `o_i`. One when every view agreed, → 0 as views cancel.
+**Definition.** The mean pairwise cosine `c_bar_i` is recovered from the resultant
+identity `‖m_i‖² = 1/n + (1 - 1/n)c_bar_i`, then
+`P^view_i = (1 + c_bar_i) / 2`. A single observation is assigned `P^view_i = 1`.
 **Error event:** an inconsistent entry.
 
 | Aspect | Detail |
 |---|---|
 | Source inputs | Per-pixel CLIP features `F_2D` (unit norm; zero outside every SAM mask) |
-| Implementation | `hovsg/utils/cross_view_consistency.py` — `accumulate_unit_embeddings` (`:35`), `cross_view_values` (`:92`) |
+| Implementation | `hovsg/utils/cross_view_consistency.py` — `accumulate_unit_embeddings`, `compute_cross_view_consistency` |
 | Computed at | Accumulated per frame in `create_feature_map`; rolled up per mask; written in `segment_objects` (`graph.py:889`) |
-| Update | Sums and counts are additive — merges and later views update the mean incrementally |
-| Stored | `cross_view_resultant_sum` (**unnormalized**), `cross_view_count`, `cross_view_point_count`, `p_view`, `u_view`, `cross_view_sufficient` |
-| Undefined | `(None, None, False)` when `count == 0` or the sum is non-finite |
-| Config | `cross_view_consistency_min_observations` (2) |
-| Numerical stability | Zero-norm and non-finite embeddings skipped before normalization; `p_view` clipped to [0,1] to absorb drift at the perfect-agreement boundary |
-| Cost | One `(n_points × D)` float64 accumulator + one int64 counter over the scene; D+2 values per object |
+| Update | Sums and counts are additive; later observations update the mean pairwise agreement incrementally |
+| Stored | `cross_view_resultant_sum` (**unnormalized**), `cross_view_count`, `p_view`, `u_view` |
+| Undefined | `(None, None)` when `count == 0` or the sum is non-finite |
+| Config | none |
+| Numerical stability | Zero-norm and non-finite embeddings are skipped before normalization; recovered cosine is clipped only for floating-point drift |
+| Cost | One `(n_points × D)` float64 accumulator + one int64 counter over the scene; D+1 values per object |
 | Tests | `tests/test_cross_view_consistency.py` (10 tests), `tests/test_object_uncertainty_end_to_end.py` |
 
 **Verification against the checklist.**
 
 - Each per-view embedding unit-normalized before accumulation — yes.
-- The running mean is **not** normalized before its norm is measured — verified by a test
-  that shows normalizing first would always yield exactly 1.0.
+- The raw running mean is never normalized before applying the resultant identity.
 - The fused embedding `v_i` never replaces the accumulator — they are separate fields,
   both serialized.
 - Enough state retained to recompute — `recompute_cross_view_consistency` re-derives
   `p_view` from persisted raw evidence alone, including after a load.
-- Rejected/invalid/duplicate observations excluded — zero features skipped; **duplicates
-  now deduplicated per view (this was the bug)**.
+- Rejected/invalid observations are excluded before accumulation.
 - A single valid observation gives 1.0 — tested, including with 5 pixels in one view.
 - Values stay in [0,1] — property test over 50 random view sets.
 
 **Changed (the substantive correction).**
 
-`accumulate_unit_embeddings` used `np.add.at`, adding **every** pixel that projected onto
-a point. The fusion it mirrors uses buffered fancy indexing, which applies only the last
-write per repeated index:
-
-```python
-a = np.zeros((3,2)); idx = [0,0,1]; b = [[1,1],[2,2],[5,5]]
-a[idx] += b        # → [[2,2],[5,5],[0,0]]   (first row discarded)
-np.add.at(a,idx,b) # → [[3,3],[5,5],[0,0]]   (both counted)
-```
-
-So `m_i` averaged observations that never entered `v_i`, and `cross_view_count` exceeded
-the fusion's own counter. Fixed by keeping the last valid observation per point per view.
-
-`cross_view_sufficient` previously thresholded the total point-view count, which is
-`n_points × n_views` — always ≥ 2 for any real object, making the flag vacuous. It now
-thresholds `count / point_count`, the mean number of views per point.
-
-**Known approximation.** `seq_merge` discards the frame→object correspondence, so there
-is no per-view *object* embedding to average; the accumulator is keyed by point and the
-object-level mean weights each view by how many of the object's points it saw. Because
-all pixels of a SAM mask share one `F_p`, this reduces to a point-count-weighted form of
-eq. (crossview) rather than a different quantity — but it is not literally the unweighted
-mean. See §5 and §7.
+The prior implementation used `‖m_i‖` directly. That quantity varies with `n` for fixed
+pairwise agreement, so the corrected code first recovers `c_bar_i` using the paper's
+identity and only then rescales it to a probability. The raw sum and count remain
+persisted so this derived value can be recomputed after loading a graph.
 
 ---
 
@@ -376,7 +352,7 @@ with `μ_c` the normalized mean of the visual embeddings of objects labelled `c`
 | Update | Prototypes rebuilt from scratch on every call, so relabels, merges and deletions are all picked up |
 | Stored | `coherence_prototype_cos_sim`, `coherence_runner_up_class`, `coherence_runner_up_cos_sim`, `label_coherence_margin`, `p_coh`, `u_coh` |
 | Undefined | All `None` when: the class has < 2 members; the leave-one-out sum has zero norm; no eligible distinct prototype exists; the embedding or label is invalid |
-| Config | `label_coherence_logit_scale` (100.0), `label_coherence_synonym_threshold` (0.9) — intentionally independent of the semantic values |
+| Config | Shared `semantic_uncertainty_logit_scale` and `semantic_uncertainty_synonym_threshold` — the paper uses the same α and τ for both margins |
 | Numerical stability | Leave-one-out norm and every competitor similarity checked with `np.isfinite` before use |
 | Cost | O(#objects × D) to build prototypes + O(#classes × D) per object; prototypes held only for instantiated classes |
 | Tests | `tests/test_label_coherence.py` (11 tests, new) |
@@ -403,7 +379,8 @@ pre-normalized vocabulary, and the first tests for this signal.
 **Dependence note.** Label Coherence and Semantic Uncertainty estimate the *same* event
 via different references (visual prototypes vs. text embeddings). They are alternative
 estimators, not independent factors; multiplying them would double-count. The code keeps
-them in separate fields and never combines them — asserted by a test.
+them in separate fields and combines them as `p_sem_bar = min(p_sem, p_coh)` before
+object-probability fusion, with undefined coherence reducing to `p_sem`.
 
 ---
 
@@ -411,11 +388,11 @@ them in separate fields and never combines them — asserted by a test.
 
 | Signal | Input data | Computation location | Update frequency | Stored graph field(s) | P range | U range | Undefined when | Config | Tests | Status |
 |---|---|---|---|---|---|---|---|---|---|---|
-| Detection | SAM `predicted_iou` | `detection_uncertainty.py`; `graph.py:873` | Per frame → per mask → per object; pooled on merge | `p_det`, `u_det`, `detection_conf_sum`, `detection_point_count` | [0,1] | [0,1] | no point evidence | — | `test_detection_uncertainty.py` | Compliant after correction |
-| Semantic | `v_i`, text bank, τ, α | `uncertainty.py:116`; `graph.py:947` | On object creation and after every merge | `p_sem`, `u_sem`, `semantic_margin`, `label_cos_sim`, `runner_up_idx`, `runner_up_cos_sim` | (0,1) | (0,1) | degenerate `v_i`; all competitors synonyms | `semantic_uncertainty_logit_scale`, `semantic_uncertainty_synonym_threshold` | `test_semantic_uncertainty.py` | Compliant after correction |
-| Membership | `v_i`, text bank, negative bank, α | `uncertainty.py:310`; `negative_labels.py:107` | Same as Semantic (shares the cosine vector) | `p_mem`, `u_mem`, `vocab_log_partition`, `negative_log_partition` | (0,1) | (0,1) | degenerate `v_i`; signal disabled | `vocab_membership_max_class_similarity`, `vocab_membership_negative_label_count` | `test_semantic_uncertainty.py`, `test_negative_labels.py` | Compliant after correction |
-| Cross-view | Per-pixel CLIP features | `cross_view_consistency.py`; `graph.py:889` | Per frame (incremental); additive on merge | `p_view`, `u_view`, `cross_view_resultant_sum`, `cross_view_count`, `cross_view_point_count`, `cross_view_sufficient` | [0,1] | [0,1] | zero observations; non-finite sum | `cross_view_consistency_min_observations` | `test_cross_view_consistency.py` | Partially compliant (see §5) |
-| Coherence | All object embeddings + labels; text bank for τ | `uncertainty.py:204`; `graph.py:1047` | Whole-graph pass after all merges | `p_coh`, `u_coh`, `label_coherence_margin`, `coherence_prototype_cos_sim`, `coherence_runner_up_class`, `coherence_runner_up_cos_sim` | (0,1) | (0,1) | singleton class; no eligible prototype; invalid input | `label_coherence_logit_scale`, `label_coherence_synonym_threshold` | `test_label_coherence.py` | Fully compliant |
+| Detection | SAM `predicted_iou` | `detection_uncertainty.py`; `graph.py` | Per frame → per mask → per object | `p_det`, `u_det`, `detection_conf_sum`, `detection_point_count` | [0,1] | [0,1] | no point evidence | — | `test_detection_uncertainty.py` | Compliant after correction |
+| Semantic | `v_i`, text bank, τ, α | `uncertainty.py`; `graph.py` | On object creation and recomputation | `p_sem`, `u_sem`, margin details | (0,1) | (0,1) | degenerate `v_i`; all competitors synonyms | shared α, τ | `test_semantic_uncertainty.py` | Compliant after correction |
+| Membership | `v_i`, text bank, negative bank, α | `uncertainty.py`; `negative_labels.py` | Same as Semantic (shares the cosine vector) | `p_mem`, `u_mem`, log likelihoods | (0,1) | (0,1) | degenerate `v_i`; signal disabled | negative-bank settings | `test_semantic_uncertainty.py` | Compliant after correction |
+| Cross-view | Unit point-view embeddings | `cross_view_consistency.py`; `graph.py` | Per frame; recomputed from persisted raw evidence | `p_view`, `u_view`, `cross_view_resultant_sum`, `cross_view_count` | [0,1] | [0,1] | zero observations; non-finite sum | — | `test_cross_view_consistency.py` | Compliant after correction |
+| Coherence | All object embeddings + labels; text bank for τ | `uncertainty.py`; `graph.py` | Whole-graph pass | `p_coh`, `u_coh`, prototype-margin details | (0,1) | (0,1) | singleton class; no eligible prototype; invalid input | shared α, τ | `test_label_coherence.py` | Compliant after correction |
 
 ---
 
@@ -436,7 +413,7 @@ the undefined branches, which previously reported inconsistent numbers.
 
 ### Eq. (membership): `P^mem_i` — **Compliant after correction**
 
-`σ(log Z_C − log Z_N)` is algebraically identical to `Z_C / (Z_C + Z_N)` and is required
+`σ(log L_C − log L_N)` is algebraically identical to `L_C / (L_C + L_N)` and is required
 for stability at α = 100. Verified against a direct evaluation of the equation at α = 5,
 where the naive form does not overflow. Both partitions use the same α; the numerator is
 the full mass over `C`.
@@ -446,20 +423,13 @@ violation — but the definition requires labels "whose text embeddings are dist
 every class in `C`", and 73.1% of the previous bank were proper nouns and dates. That
 selection is now corrected and documented.
 
-### Eq. (crossview): `P^view_i = ‖m_i‖` — **Partially compliant**
+### Eq. (crossview): `P^view_i = (1 + c_bar_i) / 2` — **Compliant after correction**
 
-The norm-of-the-unnormalized-running-mean is implemented exactly, and the accumulator now
-holds one unit observation per view per point, matching the observation set the fusion
-averaged. What remains inexact is the *granularity*: `m_i` is the mean over the object's
-point-view observations, so a view that saw more of the object contributes proportionally
-more. Eq. (crossview) as written is an unweighted mean over per-view object embeddings.
-
-The two coincide when each view contributes equally many points; otherwise the
-implemented value is a point-count-weighted variant. Recovering the literal form requires
-`seq_merge`/`hierarchical_merge` to return the frame→object correspondence so the
-per-frame mask embeddings `F_masks` (already unit-normalized) can be averaged directly.
-That is a change to HOV-SG's core merge machinery and was left out of scope; it is the
-top-ranked recommendation in §7.
+The implementation preserves the unnormalized resultant sum and count, recovers
+`c_bar_i` with the stated resultant-length identity, and applies the affine probability
+map. It explicitly assigns one to a single observation and leaves zero or non-finite
+evidence undefined. Numerical tests compare the recovered value against direct pairwise
+cosines for several observation counts.
 
 ### Eq. (coherence): `m'_i`, `P^coh_i = σ(α m'_i)` — **Fully compliant**
 
@@ -539,60 +509,38 @@ All tests pass. **No tests were skipped, and none could not be run.**
 
 Ranked by priority.
 
-**1 — `m_i` granularity (Partially compliant).** Cross-view Consistency averages
-point-view observations rather than per-view object embeddings, so views are weighted by
-how much of the object they saw. *Recommendation:* have `seq_merge`/`hierarchical_merge`
-return the `(frame, mask) → object` correspondence and accumulate `frames_feats[f][m]`
-(already unit-normalized) directly per object. This makes eq. (crossview) exact and
-removes the point-level accumulator entirely — a smaller memory footprint as well.
-Moderate change to core merge code; recommend doing it before any calibration study.
-
-**2 — Uncalibrated detector scores.** SAM's `predicted_iou` predicts mask-quality IoU, not
+**1 — Uncalibrated detector scores.** SAM's `predicted_iou` predicts mask-quality IoU, not
 P(object exists). Using it as `P^det` is the definition's premise, but the numbers are
 unlikely to be calibrated. *Recommendation:* measure reliability against HM3D ground truth
 before treating `P^det` as a probability; consider Platt scaling if it is miscalibrated.
 Note that recalibration would break the "no fitted parameter" property the semantic signal
 deliberately maintains, so keep any fitted mapping confined to this signal.
 
-**3 — Negative-bank size shifts `P_mem` globally.** Eq. (membership) compares partition
-*sums*, so `|N| / |C|` acts as a prior. With `HM3DSEM_LABELS` (`|C| = 1624`) and the
-corrected mining, `|N| ≈ 5.3k` — a ~3:1 ratio (previously ~12:1, and 73% of that bank was
-proper nouns). *Recommendation:* sweep `vocab_membership_negative_label_count` against
-ground-truth OOV objects and pin a justified value; do not leave `null` for a paper
-result. Also verify the corrected bank once it rebuilds — inspect
-`hovsg/labels/negative_label_words.json` for residual noise.
+**2 — Negative-bank quality.** The size-normalized likelihoods remove direct dependence
+on `|N|`, but the posterior still depends on whether the negative words are plausible
+out-of-vocabulary alternatives. *Recommendation:* inspect the mined bank and evaluate it
+against ground-truth OOV objects before reporting calibrated values.
 
-**4 — Vocabulary-membership cost.** Each object costs a `(|N| × D)` matvec. The bank is
+**3 — Vocabulary-membership cost.** Each object costs a `(|N| × D)` matvec. The bank is
 now normalized once per run rather than per object, so the remaining cost is the matvec
 itself. *Recommendation:* if object counts grow, batch all objects into one
 `(#objects × D) @ (D × |N|)` GEMM instead of looping.
 
-**5 — Merge behaviour for embeddings.** `Object.__add__` still does
-`mean([self.embedding, other.embedding])`, which for a chain of N merges weights
-constituents 1/2, 1/4, 1/8 … — the same defect that was fixed for `P_det`. This is
-pre-existing HOV-SG behaviour affecting `v_i` itself, so every signal reading `v_i`
-inherits it. *Recommendation:* weight by point count, mirroring the detection fix. Left
-unchanged here because it alters HOV-SG's core object representation and its retrieval
-results, which is beyond an uncertainty audit. **Note:** `merge_objects_graph` is `false`
-by default, so this path is inactive in the default configuration.
+**4 — Semantic/coherence dependence.** The two estimate the same labelling-error event.
+They are combined conservatively by their minimum, as the paper specifies; they must not
+be multiplied as independent probabilities.
 
-**6 — Semantic/coherence dependence.** The two estimate the same labelling-error event.
-No code combines them today. *Recommendation:* keep it that way, and if a downstream
-consumer needs one number, select rather than multiply.
-
-**7 — Stale prototype caches.** `recompute_label_coherence` rebuilds everything on each
+**5 — Stale prototype caches.** `recompute_label_coherence` rebuilds everything on each
 call, so there is no partial-update staleness. The residual risk is *forgetting to call it*
 after mutating objects outside `build_graph`. *Recommendation:* the current mitigation —
-`Object.__add__` nulls its own coherence fields so a missed recomputation surfaces as
-`None` rather than a stale number — is adequate; a graph-level dirty flag would be
-belt-and-braces.
+a graph-level dirty flag would be belt-and-braces.
 
-**8 — Undefined-signal handling downstream.** `propagate_semantic_uncertainty_to_rooms`
-skips objects with `p_obj is None`, and excludes classes whose every assigned object is
-undefined. Spatial duplicates are merged as connected components before noisy-OR.
+**6 — Undefined-signal handling downstream.** Object fusion leaves a missing required
+factor undefined, and room propagation skips those objects rather than inventing a
+no-evidence probability.
 *Recommendation:* surface the skip count in the pipeline summary.
 
-**9 — Calibration evaluation requires data not present here.** Measuring whether α = 100
+**7 — Calibration evaluation requires data not present here.** Measuring whether α = 100
 matches observed correctness rates needs HM3D ground-truth instance labels aligned to
 predicted objects. `hovsg/eval/hm3dsem_evaluator.py` provides the alignment machinery;
 the calibration study itself is not implemented.
@@ -606,20 +554,19 @@ the calibration study itself is not implemented.
 - `hovsg/utils/uncertainty.py` — public field-name constants; `normalize_rows`;
   `assume_normalized` fast path; undefined handling for degenerate embeddings and empty
   eligible sets; expanded equation docstrings.
-- `hovsg/utils/cross_view_consistency.py` — per-view deduplication; `point_count`-based
-  low-support flag; non-finite guard; contiguity check on in-place scatter-add.
+- `hovsg/utils/cross_view_consistency.py` — unit-observation accumulation; resultant-
+  length recovery of mean pairwise cosine; non-finite guard.
 - `hovsg/utils/detection_uncertainty.py` — `object_confidence_sum_from_points`,
   `confidence_from_sum`; removed the unused `object_confidence_from_points`.
 - `hovsg/utils/negative_labels.py` — `is_common_noun_lemma`; normalized bank storage;
   `mining_version`; distance-based count limit; untrusted-cache rebuild.
-- `hovsg/graph/object.py` — `detection_conf_sum`/`detection_point_count`/
-  `cross_view_point_count` fields with serialization; pooled-mean merge; shared field
-  tuples.
+- `hovsg/graph/object.py` — all signal fields, combined semantic estimator and raw
+  detection/cross-view evidence with serialization.
 - `hovsg/graph/graph.py` — normalized text-bank caching; `_assign_object_semantic_signals`
-  and `_normalized_negative_text_feats` helpers; degenerate-embedding label handling;
-  point-count plumbing; undefined-tolerant room propagation.
-- `config/create_graph.yaml` — documented every uncertainty parameter and the `|N|/|C|`
-  sensitivity.
+  and `_normalized_negative_text_feats` helpers; correct degenerate-embedding label
+  handling; cross-view recomputation and object-probability fusion.
+- `config/create_graph.yaml` — documents the shared semantic/coherence parameters,
+  size-normalized membership likelihoods, and parameter-free cross-view/room equations.
 - `tests/test_semantic_uncertainty.py`, `tests/test_cross_view_consistency.py`,
   `tests/test_detection_uncertainty.py`, `tests/test_negative_labels.py` — updated for
   corrected behaviour, plus new equation-agreement tests.

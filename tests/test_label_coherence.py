@@ -37,14 +37,16 @@ def make_object(object_id, embedding, label_idx):
 
 
 def make_graph(objects, text_feats, classes, tau=0.9, alpha=100.0):
+    """Graph stand-in. Label Coherence shares alpha and tau with eq. (semantic)."""
     return SimpleNamespace(
         cfg=SimpleNamespace(pipeline={}),
         objects=objects,
         label_text_feats=text_feats,
         label_text_feats_normalized=normalize_rows(text_feats),
         label_classes=classes,
-        label_coherence_synonym_threshold=tau,
-        label_coherence_logit_scale=alpha,
+        label_synonym_mask=build_synonym_eligibility_mask(text_feats, tau),
+        semantic_uncertainty_logit_scale=alpha,
+        semantic_uncertainty_synonym_threshold=tau,
         class_embedding_sum={},
         class_count={},
         class_prototype_full={},
@@ -259,24 +261,3 @@ def test_prototypes_refresh_after_deletion():
     # Class 0's prototype is now a1-free, so the competing similarity changed.
     assert objects[2].coherence_runner_up_cos_sim != pytest.approx(before)
     assert graph.class_count == {0: 1, 1: 2}
-
-
-def test_merge_clears_stale_coherence_until_recomputed():
-    import open3d as o3d
-
-    graph, objects = build_two_class_graph()
-    Graph.recompute_label_coherence(graph)
-    assert objects[0].p_coh is not None
-
-    for obj in objects:
-        pcd = o3d.geometry.PointCloud()
-        pcd.points = o3d.utility.Vector3dVector(np.random.default_rng(0).normal(size=(3, 3)))
-        obj.pcd = pcd
-
-    merged = objects[0] + objects[1]
-
-    # The merged embedding is new, so every signal read off it is stale and
-    # must read as undefined rather than as a number for the merged object.
-    for field in COHERENCE_FIELDS:
-        assert getattr(merged, field) is None
-    assert merged.p_sem is None and merged.p_mem is None

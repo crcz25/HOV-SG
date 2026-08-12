@@ -49,26 +49,24 @@ class Object:
         self.label_coherence_margin = None
         self.p_coh = None
         self.u_coh = None
-        self.vocab_log_partition = None
-        self.negative_log_partition = None
+        self.vocab_log_likelihood = None
+        self.negative_log_likelihood = None
         self.p_mem = None
         self.u_mem = None
-        # Detection: the raw point-confidence accumulators are stored so that
-        # merges recover the exact pooled mean regardless of merge order.
+        # Detection: the raw point-confidence accumulators, from which P_det is
+        # the pooled mean over the object's points.
         self.detection_conf_sum = None
         self.detection_point_count = None
         self.p_det = None
         self.u_det = None
         # Cross-view: the *unnormalized* resultant sum of unit per-view
-        # embeddings and its observation count. The normalized fused embedding
-        # never replaces these; ||sum / count|| is the signal itself.
+        # embeddings and the number n of accumulated observations. The
+        # normalized fused embedding never replaces these; they are what
+        # eq. (crossview) needs to recover the mean pairwise similarity.
         self.cross_view_resultant_sum = None
         self.cross_view_count = None
-        self.cross_view_point_count = None
         self.p_view = None
         self.u_view = None
-        self.cross_view_sufficient = None
-        self.cross_view_consistency_min_observations = 2
         self.p_obj = None
         self.u_obj = None
 
@@ -134,14 +132,14 @@ class Object:
             ),
             "p_coh": float(self.p_coh) if self.p_coh is not None else None,
             "u_coh": float(self.u_coh) if self.u_coh is not None else None,
-            "vocab_log_partition": (
-                float(self.vocab_log_partition)
-                if self.vocab_log_partition is not None
+            "vocab_log_likelihood": (
+                float(self.vocab_log_likelihood)
+                if self.vocab_log_likelihood is not None
                 else None
             ),
-            "negative_log_partition": (
-                float(self.negative_log_partition)
-                if self.negative_log_partition is not None
+            "negative_log_likelihood": (
+                float(self.negative_log_likelihood)
+                if self.negative_log_likelihood is not None
                 else None
             ),
             "p_mem": float(self.p_mem) if self.p_mem is not None else None,
@@ -166,18 +164,8 @@ class Object:
             "cross_view_count": (
                 int(self.cross_view_count) if self.cross_view_count is not None else None
             ),
-            "cross_view_point_count": (
-                int(self.cross_view_point_count)
-                if self.cross_view_point_count is not None
-                else None
-            ),
             "p_view": float(self.p_view) if self.p_view is not None else None,
             "u_view": float(self.u_view) if self.u_view is not None else None,
-            "cross_view_sufficient": (
-                bool(self.cross_view_sufficient)
-                if self.cross_view_sufficient is not None
-                else None
-            ),
             "p_obj": float(self.p_obj) if self.p_obj is not None else None,
             "u_obj": float(self.u_obj) if self.u_obj is not None else None,
         }
@@ -215,8 +203,8 @@ class Object:
             self.label_coherence_margin = metadata.get("label_coherence_margin")
             self.p_coh = metadata.get("p_coh")
             self.u_coh = metadata.get("u_coh")
-            self.vocab_log_partition = metadata.get("vocab_log_partition")
-            self.negative_log_partition = metadata.get("negative_log_partition")
+            self.vocab_log_likelihood = metadata.get("vocab_log_likelihood")
+            self.negative_log_likelihood = metadata.get("negative_log_likelihood")
             self.p_mem = metadata.get("p_mem")
             self.u_mem = metadata.get("u_mem")
             self.detection_conf_sum = metadata.get("detection_conf_sum")
@@ -234,12 +222,8 @@ class Object:
             self.cross_view_count = metadata.get("cross_view_count")
             if self.cross_view_count is not None:
                 self.cross_view_count = int(self.cross_view_count)
-            self.cross_view_point_count = metadata.get("cross_view_point_count")
-            if self.cross_view_point_count is not None:
-                self.cross_view_point_count = int(self.cross_view_point_count)
             self.p_view = metadata.get("p_view")
             self.u_view = metadata.get("u_view")
-            self.cross_view_sufficient = metadata.get("cross_view_sufficient")
             self.p_obj = metadata.get("p_obj")
             self.u_obj = metadata.get("u_obj")
 

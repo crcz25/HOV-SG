@@ -47,9 +47,8 @@ def is_common_noun_lemma(lemma):
     Open English Wordnet includes proper nouns and named entities: people
     ("1st Baron Beaverbrook"), places ("'s Gravenhage"), dates
     ("15 August 1945") and titles of works ("1 Maccabees"). Those are not
-    object categories, and admitting them both dilutes the negative bank and
-    inflates its size, which shifts P_mem downward for every object because
-    eq. (membership) compares partition *sums* over C and N.
+    object categories, so admitting them dilutes the negative bank with
+    entries that are not plausible true classes for a scanned object.
 
     The rule keeps lemmas that are entirely lowercase (Wordnet capitalizes
     proper nouns), alphabetic apart from internal spaces and hyphens, and at
@@ -132,10 +131,10 @@ def load_or_build_negative_label_feats(
     ``assume_normalized=True`` into
     :func:`hovsg.utils.uncertainty.compute_vocabulary_membership`.
 
-    Note that ``|N|`` directly shifts P_mem: eq. (membership) compares the
-    partition sum over C against the sum over N, so a bank an order of
-    magnitude larger than the vocabulary lowers P_mem for every object.
-    ``negative_label_count`` is the control for that ratio.
+    ``negative_label_count`` optionally caps ``|N|``, keeping the candidates
+    furthest from every vocabulary class. P_mem does not depend on ``|N|`` --
+    eq. (membership) divides each sum by the size of its set -- so the cap only
+    bounds the cost of encoding and storing the bank.
     """
     label_text_feats = np.asarray(label_text_feats, dtype=np.float64)
     if label_text_feats.ndim != 2 or label_text_feats.shape[0] == 0:

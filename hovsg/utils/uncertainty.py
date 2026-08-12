@@ -21,8 +21,8 @@ SEMANTIC_FIELDS = (
 
 #: Field names written by :func:`compute_vocabulary_membership`.
 MEMBERSHIP_FIELDS = (
-    "vocab_log_partition",
-    "negative_log_partition",
+    "vocab_log_likelihood",
+    "negative_log_likelihood",
     "p_mem",
     "u_mem",
 )
@@ -37,9 +37,27 @@ COHERENCE_FIELDS = (
     "u_coh",
 )
 
-# The fused object-level probability is kept as a probability/uncertainty
-# pair, like each of its five input signals.
-OBJECT_FIELDS = ("p_obj", "u_obj")
+def combine_semantic_confidence(
+    p_sem: Optional[float], p_coh: Optional[float]
+) -> Optional[float]:
+    """Combine the two label-error estimators, eq. (coherence).
+
+    P_sem (against text references) and P_coh (against in-map visual
+    prototypes) estimate the same labeling-error event, so they are combined as
+    the minimum rather than multiplied as independent factors::
+
+        P_sem_bar = min(P_sem, P_coh)
+
+    and a low value from either lowers the confidence. When the object's class
+    has no other instance in the map, P_coh is undefined and P_sem_bar reduces
+    to P_sem. P_sem itself being undefined leaves the pair undefined: the paper
+    defines no reduction for that direction.
+    """
+    if p_sem is None:
+        return None
+    if p_coh is None:
+        return float(p_sem)
+    return float(min(p_sem, p_coh))
 
 
 def compute_object_probability(
@@ -351,13 +369,18 @@ def compute_vocabulary_membership(
 ):
     """Compute confidence that an object belongs to the configured vocabulary.
 
-    Implements P_mem = Z_C / (Z_C + Z_N) with
-    Z_C = sum over c in C of exp(alpha cos(v_i, t_c)) and Z_N the same sum over
-    the negative bank N. The ratio is evaluated as
-    ``sigma(log Z_C - log Z_N)``, which is algebraically identical and keeps
-    both partition sums in log space: at alpha = 100 the raw exponentials
-    overflow float64 for cosines above ~7.1e-3, so log-sum-exp is required, not
-    merely preferable.
+    Implements eq. (membership), P_mem = L_C / (L_C + L_N) with the two
+    *size-normalized* likelihoods
+
+        L_C = (1 / |C|) sum over c in C of exp(alpha cos(v_i, t_c)),
+        L_N = (1 / |N|) sum over t in N of exp(alpha cos(v_i, t)),
+
+    the division by |C| and |N| being what removes the dependence of the
+    posterior on the number of words in each set. The ratio is evaluated as
+    ``sigma(log L_C - log L_N)``, which is algebraically identical and keeps
+    both terms in log space: at alpha = 100 the raw exponentials overflow
+    float64 for cosines above ~7.1e-3, so log-sum-exp is required, not merely
+    preferable.
 
     ``text_feats`` are the vocabulary classes and ``negative_text_feats`` are
     the fixed, scene-independent negative bank.  ``similarity`` can be supplied
@@ -383,11 +406,11 @@ def compute_vocabulary_membership(
 
     embedding_norm = np.linalg.norm(embedding)
     if not np.isfinite(embedding_norm) or embedding_norm < _NORM_EPSILON:
-        # Every cos(v_i, .) in eq. (membership) is undefined, so the two
-        # partition sums and their ratio are undefined as well. The previous
-        # implementation returned P_mem = 0.0, a fabricated probability that
-        # claimed certain out-of-vocabulary status for an object that simply
-        # has no usable embedding.
+        # Every cos(v_i, .) in eq. (membership) is undefined, so both
+        # likelihoods and their ratio are undefined as well. Reporting
+        # P_mem = 0.0 would be a fabricated probability claiming certain
+        # out-of-vocabulary status for an object that simply has no usable
+        # embedding.
         logging.getLogger(__name__).warning(
             "Vocabulary Membership is undefined for a zero-norm or non-finite "
             "embedding"
@@ -407,12 +430,17 @@ def compute_vocabulary_membership(
     )
 
     alpha = float(logit_scale)
-    vocab_log_partition = float(logsumexp(alpha * vocab_similarities))
-    negative_log_partition = float(logsumexp(alpha * negative_similarities))
-    p_mem = float(expit(vocab_log_partition - negative_log_partition))
+    # log of the size-normalized sums: log((1/K) sum exp(.)) = logsumexp(.) - log K.
+    vocab_log_likelihood = float(
+        logsumexp(alpha * vocab_similarities) - np.log(vocab_similarities.size)
+    )
+    negative_log_likelihood = float(
+        logsumexp(alpha * negative_similarities) - np.log(negative_similarities.size)
+    )
+    p_mem = float(expit(vocab_log_likelihood - negative_log_likelihood))
     return {
-        "vocab_log_partition": vocab_log_partition,
-        "negative_log_partition": negative_log_partition,
+        "vocab_log_likelihood": vocab_log_likelihood,
+        "negative_log_likelihood": negative_log_likelihood,
         "p_mem": p_mem,
         "u_mem": float(1.0 - p_mem),
     }

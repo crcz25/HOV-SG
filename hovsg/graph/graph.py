@@ -78,7 +78,7 @@ from hovsg.utils.detection_uncertainty import (
 )
 from hovsg.utils.cross_view_consistency import (
     accumulate_unit_embeddings,
-    cross_view_values,
+    compute_cross_view_consistency,
 )
 from hovsg.utils.constants import MATTERPORT_GT_LABELS, CLIP_DIM
 from hovsg.utils.llm_utils import (
@@ -122,13 +122,13 @@ class Graph:
         self.label_text_feats_normalized = None
         self._negative_text_feats_normalized = None
         self.semantic_uncertainty_logit_scale = None
+        # Semantic Uncertainty and Label Coherence are converted at the same
+        # logit scale alpha and exclude synonyms with the same threshold tau,
+        # so a single pair of values serves both margins.
         self.semantic_uncertainty_synonym_threshold = None
-        self.label_coherence_logit_scale = None
-        self.label_coherence_synonym_threshold = None
         self.class_embedding_sum = {}
         self.class_count = {}
         self.class_prototype_full = {}
-        self.cross_view_consistency_min_observations = None
         # This pipeline retains per-object cross-view evidence and computes
         # p_view from it.  The explicit flag lets the fusion helper distinguish
         # structural absence from an individual object's undefined p_view.
@@ -331,14 +331,13 @@ class Graph:
         masks_confs = []
         masks_cross_view_sums = []
         masks_cross_view_counts = []
-        masks_cross_view_point_counts = []
         for i, mask_3d in tqdm(enumerate(self.mask_pcds), desc="Fusing features"):
             # find the points in the mask
             mask_3d = mask_3d.voxel_down_sample(self.cfg.pipeline.voxel_size * 2)
             points = np.asarray(mask_3d.points)
-            # Keep the confidence sum and point count, not just their ratio, so
-            # a later object merge yields the exact pooled mean (see
-            # Object.__add__).
+            # Keep the confidence sum and the point count, not just their
+            # ratio: the object node stores both so P_det stays recomputable
+            # from raw evidence after a reload.
             masks_confs.append(
                 object_confidence_sum_from_points(self.full_conf_array, tree_pcd, points)
             )
@@ -354,7 +353,6 @@ class Graph:
                     np.zeros(self.clip_feat_dim, dtype=self.full_cross_view_sum.dtype)
                 )
                 masks_cross_view_counts.append(0)
-                masks_cross_view_point_counts.append(0)
                 continue
             feats, selected_indices = feats_denoise_dbscan_with_indices(
                 feats, eps=0.01, min_points=100
@@ -369,17 +367,11 @@ class Graph:
             masks_cross_view_counts.append(
                 int(np.sum(self.full_cross_view_count[selected_point_indices]))
             )
-            # Number of distinct contributing points, so that the low-support
-            # flag can threshold views per point rather than point-views.
-            masks_cross_view_point_counts.append(
-                int(np.count_nonzero(self.full_cross_view_count[selected_point_indices]))
-            )
             masks_feats.append(feats)
         self.mask_feats = masks_feats
         self.mask_confs = masks_confs
         self.mask_cross_view_sums = masks_cross_view_sums
         self.mask_cross_view_counts = masks_cross_view_counts
-        self.mask_cross_view_point_counts = masks_cross_view_point_counts
         print("number of masks: ", len(self.mask_feats))
         print("number of pcds in hovsg: ", len(self.mask_pcds))
         assert len(self.mask_pcds) == len(self.mask_confs) == len(self.mask_feats)
@@ -717,11 +709,14 @@ class Graph:
             text_feats,
             assume_normalized=text_feats is self.label_text_feats_normalized,
         )
-        # A zero-norm embedding yields an all-zero similarity vector, whose
-        # argmax is class 0 for arbitrary reasons. Assigning that label would
-        # give the object a fabricated class and let it pollute the visual
-        # prototypes, so it is left unlabeled instead.
-        if not np.any(similarity):
+        # A zero-norm or non-finite embedding makes every cosine undefined.
+        # ``compute_cosine_similarities`` represents that case by returning an
+        # all-zero vector, but a *valid* embedding can also be orthogonal to
+        # every vocabulary vector and has the same vector of scores.  The
+        # latter still has a well-defined argmax, as required by the label
+        # definition, so test the embedding itself rather than its scores.
+        embedding_norm = np.linalg.norm(np.asarray(object_feat, dtype=np.float64))
+        if not np.isfinite(embedding_norm) or embedding_norm < 1e-8:
             return None, None, similarity
         # find the class with the highest similarity
         label_idx = int(np.argmax(similarity))
@@ -751,26 +746,8 @@ class Graph:
         self.semantic_uncertainty_synonym_threshold = float(
             self.cfg.pipeline.semantic_uncertainty_synonym_threshold
         )
-        # These currently mirror the semantic signal's convention, not its
-        # config value. Keep them independently overridable so a future change
-        # to semantic uncertainty does not silently change Label Coherence.
-        self.label_coherence_logit_scale = float(
-            _pipeline_value(self.cfg.pipeline, "label_coherence_logit_scale", 100.0)
-        )
-        self.label_coherence_synonym_threshold = float(
-            _pipeline_value(
-                self.cfg.pipeline, "label_coherence_synonym_threshold", 0.9
-            )
-        )
-        self.cross_view_consistency_min_observations = int(
-            _pipeline_value(
-                self.cfg.pipeline,
-                "cross_view_consistency_min_observations",
-                2,
-            )
-        )
-        if self.cross_view_consistency_min_observations < 1:
-            raise ValueError("cross_view_consistency_min_observations must be at least 1")
+        # One mask for both margin signals: eq. (semantic) and eq. (coherence)
+        # exclude competitors with the same condition cos(t_c, t_l) < tau.
         self.label_synonym_mask = build_synonym_eligibility_mask(
             self.label_text_feats_normalized, self.semantic_uncertainty_synonym_threshold
         )
@@ -890,14 +867,8 @@ class Graph:
                     if object.p_det is not None
                     else None
                 )
-                object.cross_view_consistency_min_observations = (
-                    self.cross_view_consistency_min_observations
-                )
                 cross_view_sums = getattr(self, "mask_cross_view_sums", None)
                 cross_view_counts = getattr(self, "mask_cross_view_counts", None)
-                cross_view_point_counts = getattr(
-                    self, "mask_cross_view_point_counts", None
-                )
                 if (
                     cross_view_sums is not None
                     and cross_view_counts is not None
@@ -908,21 +879,9 @@ class Graph:
                         cross_view_sums[mask_idx], dtype=np.float64
                     )
                     object.cross_view_count = int(cross_view_counts[mask_idx])
-                    object.cross_view_point_count = (
-                        int(cross_view_point_counts[mask_idx])
-                        if cross_view_point_counts is not None
-                        and mask_idx < len(cross_view_point_counts)
-                        else None
-                    )
-                    (
-                        object.p_view,
-                        object.u_view,
-                        object.cross_view_sufficient,
-                    ) = cross_view_values(
+                    object.p_view, object.u_view = compute_cross_view_consistency(
                         object.cross_view_resultant_sum,
                         object.cross_view_count,
-                        min_observations=self.cross_view_consistency_min_observations,
-                        point_count=object.cross_view_point_count,
                     )
                 name, label_idx, similarity = self.identify_object(
                     object.embedding, self.label_text_feats_normalized, classes
@@ -1000,29 +959,19 @@ class Graph:
 
     def recompute_cross_view_consistency(self):
         """Refresh derived cross-view values from persisted raw evidence."""
-        min_observations = int(
-            self.cross_view_consistency_min_observations
-            if self.cross_view_consistency_min_observations is not None
-            else 2
-        )
         for object in self.objects:
             resultant_sum = getattr(object, "cross_view_resultant_sum", None)
             count = getattr(object, "cross_view_count", None)
             if resultant_sum is None or count is None:
                 object.p_view = None
                 object.u_view = None
-                object.cross_view_sufficient = None
                 continue
-            object.cross_view_consistency_min_observations = min_observations
-            object.p_view, object.u_view, object.cross_view_sufficient = cross_view_values(
-                resultant_sum,
-                count,
-                min_observations=min_observations,
-                point_count=getattr(object, "cross_view_point_count", None),
+            object.p_view, object.u_view = compute_cross_view_consistency(
+                resultant_sum, count
             )
 
     def recompute_semantic_uncertainty(self):
-        """Refresh object margin uncertainty after embeddings have been merged."""
+        """Recompute the per-object margin signals over the whole object set."""
         if (
             self.label_text_feats is None
             or self.label_classes is None
@@ -1057,35 +1006,29 @@ class Graph:
         Graph.recompute_object_probability(self)
 
     def recompute_label_coherence(self):
-        """Refresh visual class-prototype margins after all object merges."""
-        if self.label_text_feats is None or self.label_classes is None:
+        """Recompute the visual class-prototype margins over the whole graph."""
+        if (
+            self.label_text_feats is None
+            or self.label_classes is None
+            or self.label_synonym_mask is None
+        ):
             raise RuntimeError(
-                "Object label features and classes must be loaded before "
-                "recomputing Label Coherence"
+                "Object label features, classes and synonym mask must be loaded "
+                "before recomputing Label Coherence"
             )
+        logit_scale = self.semantic_uncertainty_logit_scale
+        if logit_scale is None:
+            raise RuntimeError(
+                "Semantic logit scale must be configured before recomputation"
+            )
+        logit_scale = float(logit_scale)
 
         if getattr(self, "label_text_feats_normalized", None) is None:
             self.label_text_feats_normalized = normalize_rows(self.label_text_feats)
         text_feats = self.label_text_feats_normalized
-        threshold = getattr(self, "label_coherence_synonym_threshold", None)
-        if threshold is None:
-            threshold = _pipeline_value(
-                self.cfg.pipeline, "label_coherence_synonym_threshold", 0.9
-            )
-        logit_scale = getattr(self, "label_coherence_logit_scale", None)
-        if logit_scale is None:
-            logit_scale = _pipeline_value(
-                self.cfg.pipeline, "label_coherence_logit_scale", 100.0
-            )
-        threshold = float(threshold)
-        logit_scale = float(logit_scale)
-
-        # Build the synonym mask once from the same cached vocabulary used by
-        # Semantic Uncertainty. This does not invoke the text encoder.
-        coherence_synonym_mask = build_synonym_eligibility_mask(text_feats, threshold)
         # Prototypes are rebuilt from scratch on every call, so labels,
-        # embeddings, merges and deletions since the last call are all picked
-        # up; there is no partially updated cache to go stale.
+        # embeddings and deletions since the last call are all picked up;
+        # there is no partially updated cache to go stale.
         self.class_embedding_sum = {}
         self.class_count = {}
         self.class_prototype_full = {}
@@ -1135,7 +1078,7 @@ class Graph:
                 self.class_embedding_sum,
                 self.class_count,
                 self.class_prototype_full,
-                coherence_synonym_mask,
+                self.label_synonym_mask,
                 label_classes=self.label_classes,
                 logit_scale=logit_scale,
             )

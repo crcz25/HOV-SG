@@ -1,0 +1,65 @@
+\subsection{Uncertainty Signals}
+\label{sec:uncertainty-signals}
+
+From the stored quantities we derive per-object uncertainty signals, each paired with the object-level error it indicates.
+
+\subsubsection{Detection Confidence}
+The detector reports a confidence score $s^{}_i \in [0,1]$ for the detection. This score is produced differently across systems,~\eg{} from SAM's~\cite{kirillov2023segment} predicted IoU~\cite{werby2024hierarchical}, GroundingDINO's~\cite{liu2023grounding} detection score~\cite{ zumaya2026occupancy},  or YOLOE's~\cite{wang2025yoloe} predicted IoU~\cite{puigjaner2026relationship}. In each case, the score is correlated with detection quality but not guaranteed to be calibrated; we treat $s^{}_i$ as an estimate of the probability that the detection corresponds to a real object, consistent with common practice for detector confidence scores. The associated error is a false positive: a detection that corresponds to no real object.
+
+\subsubsection{Semantic Uncertainty}
+The label $\ell^{}_i$ is the class most similar to $\mathbf{v}^{}_i$, and we reflect its reliability by how much that similarity exceeds that of the next class. Image and text embeddings occupy two separate regions of the joint space, a gap known as the modality gap~\cite{liang2022mind}. As a consequence, the absolute value of $\cos(\mathbf{v}^{}_i, \mathbf{t}^{}_{\ell_i})$ is shaped by this gap as much as by the correctness of $\ell^{}_i$, and is not directly comparable across objects or interpretable as a probability on its own. A near-synonym of $\ell^{}_i$ (\eg{} sofa for couch) has an almost identical text embedding and would collapse this gap for reasons of vocabulary rather than of the object, so we measure it against the highest-scoring class whose text embedding is not near-identical to $\mathbf{t}^{}_{\ell_i}$,
+\begin{equation}
+    m^{}_i = \cos\bigl(\mathbf{v}^{}_i, \mathbf{t}^{}_{\ell_i}\bigr) - \max_{c\, :\, \cos(\mathbf{t}^{}_c,\, \mathbf{t}^{}_{\ell_i}) < \tau} \cos\bigl(\mathbf{v}^{}_i, \mathbf{t}^{}_c\bigr),
+\end{equation}
+the threshold $\tau$ excluding labels synonymous with $\ell^{}_i$. At CLIP's~\cite{radford2021learning} logit scale $\alpha$, the model's own softmax assigns each class $c$ a logit $\alpha\cos(\mathbf{v}^{}_i, \mathbf{t}^{}_c)$. Restricting this softmax to the binary comparison between $\ell^{}_i$ and the next best distinct class gives the model's confidence that $\ell^{}_i$ is the correct class rather than the nearest distinct one,
+\begin{equation}
+    \begin{aligned}
+        P^{\mathrm{sem}}_i &= \frac{e^{\alpha\cos(\mathbf{v}^{}_i, \mathbf{t}^{}_{\ell_i})}}{e^{\alpha\cos(\mathbf{v}^{}_i, \mathbf{t}^{}_{\ell_i})} + e^{\alpha \max_{c\,:\,\cos(\mathbf{t}^{}_c,\, \mathbf{t}^{}_{\ell_i}) < \tau}\cos(\mathbf{v}^{}_i, \mathbf{t}^{}_c)}} \\ &= \sigma\bigl(\alpha\, m^{}_i\bigr),
+    \end{aligned}
+    \label{eq:semantic}
+\end{equation}
+with $\sigma$ the logistic function, a two-class softmax reducing algebraically to a sigmoid of the logit gap. The semantic uncertainty is its complement $1 - P^{\mathrm{sem}}_i$. Restricting the denominator to two classes removes the remaining $|\mathcal{C}| - 2$ terms, so $P^{\mathrm{sem}}_i$ is an upper bound on the probability the full softmax over $\mathcal{C}$ assigns to $\ell^{}_i$; the quantity it estimates is the correctness of $\ell^{}_i$ against the nearest distinct alternative, a label synonymous with $\ell^{}_i$ counting as correct.
+The associated error is a labeling error: an assigned class that does not match the object.
+
+\subsubsection{Label Coherence}
+The semantic margin $m^{}_i$ of \cref{eq:semantic} measures $\mathbf{v}^{}_i$ against text references, which requires crossing the offset that separates image from text embeddings~\cite{liang2022mind}. Comparisons within one modality (\eg{} image--image) do not cross that offset, so their level is comparable across objects. For each class $c$ instantiated in $\mathcal{M}$, let $\boldsymbol{\mu}^{}_c$ be the normalized mean of the visual embeddings of the objects labeled $c$, an in-map visual reference, or \emph{prototype}, for the class. We define the coherence margin $m'_i$ by comparing the similarity of $o^{}_i$ to its label's prototype against that of the next best distinct prototype. When evaluating $o^{}_i$ we omit its embedding $\mathbf{v}^{}_i$ from the mean defining $\boldsymbol{\mu}^{}_{\ell_i}$. If $\mathbf{v}^{}_i$ were included, $\boldsymbol{\mu}^{}_{\ell_i}$ would be computed partly from $\mathbf{v}^{}_i$ itself, and $\cos(\mathbf{v}^{}_i, \boldsymbol{\mu}^{}_{\ell_i})$ would then measure the similarity of $\mathbf{v}^{}_i$ to a prototype it contributed to, which raises the similarity independently of whether $\ell^{}_i$ is correct. Excluding $\mathbf{v}^{}_i$ avoids this effect:
+\begin{equation}
+    m'_i = \cos\bigl(\mathbf{v}^{}_i, \boldsymbol{\mu}^{}_{\ell_i}\bigr) - \max_{c\, :\, \cos(\mathbf{t}^{}_c,\, \mathbf{t}^{}_{\ell_i}) < \tau} \cos\bigl(\mathbf{v}^{}_i, \boldsymbol{\mu}^{}_c\bigr),
+\end{equation}
+over the non-synonym classes instantiated in $\mathcal{M}$, converted at the same logit scale, $P^{\mathrm{coh}}_i = \sigma(\alpha\, m'_i)$; the signal is undefined when $\ell^{}_i$ has no other instance. The associated error is a labeling error, the same the margin of \cref{eq:semantic} indicates: the two are alternative estimators rather than independent factors.
+
+We therefore combine them as
+\begin{equation}
+    \bar{P}^{\mathrm{sem}}_i = \min\bigl(P^{\mathrm{sem}}_i,\, P^{\mathrm{coh}}_i\bigr),
+    \label{eq:coherence}
+\end{equation}
+so that a low value from either estimator lowers the confidence.
+When $\ell^{}_i$ has no other instance in $\mathcal{M}$ and $P^{\mathrm{coh}}_i$ is undefined, $\bar{P}^{\mathrm{sem}}_i$ reduces to $P^{\mathrm{sem}}_i$.
+
+\subsubsection{Vocabulary Membership}
+A given object $o^{}_i$ whose true class $c$ is absent from $\mathcal{C}$ produces a near-uniform similarity profile, since the similarity between its embeddings $\mathbf{v}^{}_i$ and every class embedding in $\mathcal{C}$ is low. The semantic margin of \cref{eq:semantic} however measures only the difference between the top two similarities, and this difference can be large even when both similarities are low, resulting in assigning a label without evidence that the object belongs to $\mathcal{C}$.
+
+We therefore compare the similarity of $\mathbf{v}^{}_i$ to $\mathcal{C}$ against its similarity to a separate set $\mathcal{N}$ of \emph{negative labels}~\cite{jiang2024negative}. $\mathcal{N}$ is constructed
+by selecting words from a lexical database whose text embeddings are distant from every class in $\mathcal{C}$. We then define a membership probability, the proportion of total similarity assigned to $\mathcal{C}$ rather than to $\mathcal{N}$, computed at the same logit scale $\alpha$ used in \cref{eq:semantic}:
+\begin{equation}
+    P^{\mathrm{mem}}_i = \frac{\frac{1}{|\mathcal{C}|} \sum\limits_{c \in \mathcal{C}} e^{\alpha \cos(\mathbf{v}^{}_i,\, \mathbf{t}^{}_c)}}{\frac{1}{|\mathcal{C}|} \sum\limits_{c \in \mathcal{C}} e^{\alpha \cos(\mathbf{v}^{}_i,\, \mathbf{t}^{}_c)} + \frac{1}{|\mathcal{N}|} \sum\limits_{\mathbf{t} \in \mathcal{N}} e^{\alpha \cos(\mathbf{v}^{}_i,\, \mathbf{t})}}.
+    \label{eq:membership}
+\end{equation}
+
+This quantity has a direct probabilistic interpretation. Under a prior that assigns equal probability to $\mathcal{C}$ and to $\mathcal{N}$, with a uniform distribution within each set, and a likelihood proportional to $e^{\alpha\cos(\mathbf{v}^{}_i,\, \cdot\,)}$, the numerator and the two terms of the denominator are the likelihoods of $\mathcal{C}$ and $\mathcal{N}$ under this model. $P^{\mathrm{mem}}_i$ is then the posterior probability that the true class of $\mathbf{v}^{}_i$ belongs to $\mathcal{C}$. Division by $|\mathcal{C}|$ and $|\mathcal{N}|$ removes the dependence of this posterior on the number of words in each set.
+
+% Two cases follow from this definition.
+When $\mathbf{v}^{}_i$ corresponds to an object whose class is in $\mathcal{C}$, its similarity concentrates on that class, and $P^{\mathrm{mem}}_i$ approaches one. When $\mathbf{v}^{}_i$ corresponds to an object whose class is not in $\mathcal{C}$, its similarity to the classes in $\mathcal{C}$ and to the words in $\mathcal{N}$ is comparable in magnitude, and the majority of the posterior probability is assigned to $\mathcal{N}$.
+
+The error this signal identifies is out-of-vocabulary content: an object entry whose true class does not belong to $\mathcal{C}$.
+
+\subsubsection{Cross-view Consistency}
+The preceding signals are evaluated over the fused embedding $\mathbf{v}^{}_i$: the fusion averages away any disagreement among the per-view embeddings, and the signals inherit the resulting error~\cite{puigjaner2026relationship}. An object whose views are divided between two appearances is fused into the average of both.
+We recover the discarded disagreement from the fusion.
+Let $\mathbf{m}^{}_i$ be the unweighted running mean of the per-view unit embeddings. By the resultant-length identity for unit vectors, $\lVert \mathbf{m}^{}_i \rVert^2 = \tfrac{1}{n} + (1-\tfrac{1}{n})\,\bar{c}^{}_i$, where $n$ is the number of views and $\bar{c}^{}_i$ the mean pairwise cosine similarity between them. The value of $\lVert \mathbf{m}^{}_i \rVert$ depends on both the agreement $\bar{c}^{}_i$ and the number of views $n$: for a fixed $\bar{c}^{}_i < 1$, $\lVert \mathbf{m}^{}_i \rVert$ decreases as $n$ increases, so two objects with identical view agreement but different numbers of views would be assigned different values of $\lVert \mathbf{m}^{}_i \rVert$.
+Therefore, we first recover $\bar{c}^{}_i$ from the identity above, using the observed $\lVert \mathbf{m}^{}_i \rVert$ and $n$. As a mean cosine similarity, $\bar{c}^{}_i \in [-1, 1]$, with $-1$ corresponding to complete disagreement, $1$ to complete agreement, and $0$ to views that are on average orthogonal. To express this as a probability, we apply the affine map $x \mapsto \tfrac{x+1}{2}$, the unique linear rescaling of $[-1,1]$ onto $[0,1]$ that sends $-1 \mapsto 0$ and $1 \mapsto 1$, defining
+\begin{equation}
+    P^{\mathrm{view}}_i = \frac{1 + \bar{c}^{}_i}{2},
+    \label{eq:crossview}
+\end{equation}
+which equals one when every view produced the same embedding and decreases toward zero as the views disagree, independently of how many views were observed. A single view leaves $\bar{c}^{}_i$ undefined, and we set $P^{\mathrm{view}}_i = 1$. The quantity measures the agreement of the system's own observations, so it is paired with the union of the error types.

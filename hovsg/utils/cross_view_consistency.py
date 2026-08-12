@@ -1,15 +1,25 @@
-"""Cross-view agreement accumulation and confidence helpers.
+"""Cross-view agreement accumulation and confidence.
 
-Implements P^view_i = ||m_i||, where m_i is the running mean of the per-view
-unit embeddings that the feature fusion averaged into the object embedding
-v_i.  The signal is the disagreement the fusion discards: it equals one when
-every view produced the same embedding and decreases toward zero as the views
-cancel.
+Implements eq. (crossview) of the paper. Let m_i be the unweighted running mean
+of the n per-view unit embeddings that the feature fusion averaged into the
+object embedding v_i. The resultant-length identity for unit vectors gives
 
-HOV-SG fuses features at point level, so the accumulator is keyed by point.
-One call to :func:`accumulate_unit_embeddings` represents exactly one view
-(one RGB-D frame), and each point contributes at most one unit observation per
-view -- see the deduplication note in that function.
+    ||m_i||^2 = 1/n + (1 - 1/n) * c_bar_i,
+
+with c_bar_i the mean pairwise cosine similarity between the views. ||m_i||
+therefore depends on n as well as on the agreement, so the signal is *not*
+||m_i||: c_bar_i is first recovered from the identity and then mapped from
+[-1, 1] onto [0, 1],
+
+    P^view_i = (1 + c_bar_i) / 2,
+
+which is one when every view produced the same embedding and decreases as the
+views disagree, independently of how many views were observed. A single view
+leaves c_bar_i undefined and P^view_i is set to 1.
+
+HOV-SG fuses features at point level, so the accumulator is keyed by point and
+one accumulated unit vector is one (point, view) observation; n is the number
+of accumulated unit vectors, which is what the identity above requires.
 """
 
 import numpy as np
@@ -89,54 +99,54 @@ def accumulate_unit_embeddings(
     np.add.at(_as_writable_1d(counter, "counter"), kept_indices, 1)
 
 
-def cross_view_values(
-    resultant_sum: np.ndarray,
-    count: int,
-    min_observations: int = 2,
-    point_count: int = None,
-):
-    """Return P^view, U^view and the low-support flag for one object.
+def mean_pairwise_cosine_similarity(resultant_norm: float, view_count: int):
+    """Recover c_bar_i from ||m_i|| and n via the resultant-length identity.
+
+    Inverting ||m_i||^2 = 1/n + (1 - 1/n) c_bar_i gives
+
+        c_bar_i = (||m_i||^2 - 1/n) / (1 - 1/n).
+
+    Returns ``None`` for n < 2, where a mean pairwise similarity does not exist.
+    The result is clipped to [-1, 1] to absorb floating-point drift only; the
+    identity itself cannot leave that interval for unit observations.
+    """
+    view_count = int(view_count)
+    if view_count < 2:
+        return None
+    inverse_count = 1.0 / view_count
+    mean_cosine = (float(resultant_norm) ** 2 - inverse_count) / (1.0 - inverse_count)
+    return float(np.clip(mean_cosine, -1.0, 1.0))
+
+
+def compute_cross_view_consistency(resultant_sum: np.ndarray, view_count: int):
+    """Return ``(P^view_i, U^view_i)`` for one object.
 
     ``resultant_sum`` is the *unnormalized* accumulated sum of unit per-view
-    embeddings and ``count`` the number of accumulated observations, so
-    ``resultant_sum / count`` is the running mean ``m_i`` whose norm is the
-    signal. Both are stored on the object; the normalized fused embedding
-    ``v_i`` never replaces them.
+    embeddings and ``view_count`` is n, the number of accumulated observations,
+    so ``resultant_sum / view_count`` is the running mean ``m_i``. Both are
+    stored on the object; the normalized fused embedding ``v_i`` never replaces
+    them.
 
-    ``point_count`` is the number of distinct points that contributed. Because
-    the accumulator is keyed by point, ``count`` totals point-view observations
-    over the whole object, so ``count / point_count`` is the mean number of
-    views per point -- the quantity ``min_observations`` is meant to threshold.
-    When ``point_count`` is omitted the flag falls back to ``count``, which is
-    equivalent only for a single-point object.
-
-    Returns ``(None, None, False)`` when there is no evidence at all; the
-    signal is undefined rather than assigned a fabricated probability.
+    Returns ``(None, None)`` when there is no evidence at all: the signal is
+    undefined rather than assigned a fabricated probability.
     """
-    count = int(count)
-    min_observations = int(min_observations)
-    if count < 0:
-        raise ValueError("cross_view_count must not be negative")
-    if min_observations < 1:
-        raise ValueError("min_observations must be at least 1")
-    if count == 0:
-        return None, None, False
+    view_count = int(view_count)
+    if view_count < 0:
+        raise ValueError("view_count must not be negative")
+    if view_count == 0:
+        return None, None
 
     resultant_sum = np.asarray(resultant_sum, dtype=np.float64).reshape(-1)
     if not np.all(np.isfinite(resultant_sum)):
-        return None, None, False
+        return None, None
 
-    p_view = float(np.linalg.norm(resultant_sum / count))
-    # The mean of unit vectors cannot exceed unit length; the clip only absorbs
-    # floating-point drift at the perfect-agreement boundary.
-    p_view = float(np.clip(p_view, 0.0, 1.0))
+    if view_count == 1:
+        # A single view leaves c_bar_i undefined; the paper sets P^view_i = 1.
+        return 1.0, 0.0
 
-    if point_count is None:
-        observations_per_point = float(count)
-    else:
-        point_count = int(point_count)
-        if point_count <= 0:
-            return p_view, float(1.0 - p_view), False
-        observations_per_point = count / point_count
-
-    return p_view, float(1.0 - p_view), observations_per_point >= min_observations
+    resultant_norm = float(np.linalg.norm(resultant_sum / view_count))
+    mean_cosine = mean_pairwise_cosine_similarity(resultant_norm, view_count)
+    # Affine map of [-1, 1] onto [0, 1]; no further clipping is needed because
+    # mean_pairwise_cosine_similarity already returns a value in [-1, 1].
+    p_view = (1.0 + mean_cosine) / 2.0
+    return p_view, float(1.0 - p_view)

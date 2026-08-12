@@ -109,7 +109,7 @@ def test_precomputed_similarity_vector_is_reused():
     assert result["semantic_margin"] == pytest.approx(0.1)
 
 
-def test_vocabulary_membership_uses_stable_log_partitions():
+def test_vocabulary_membership_uses_stable_log_likelihoods():
     result = compute_vocabulary_membership(
         np.array([1.0, 0.0]),
         np.eye(2),
@@ -117,8 +117,10 @@ def test_vocabulary_membership_uses_stable_log_partitions():
         logit_scale=1000.0,
     )
 
-    assert result["vocab_log_partition"] == pytest.approx(1000.0)
-    assert result["negative_log_partition"] == pytest.approx(0.0)
+    # log((e^1000 + e^0) / 2) = 1000 - log 2 to float precision, and the single
+    # negative label gives log(e^0 / 1) = 0.
+    assert result["vocab_log_likelihood"] == pytest.approx(1000.0 - np.log(2.0))
+    assert result["negative_log_likelihood"] == pytest.approx(0.0)
     assert result["p_mem"] == pytest.approx(1.0)
     assert result["u_mem"] == pytest.approx(0.0)
 
@@ -233,12 +235,12 @@ def reference_membership(embedding, text_feats, negative_feats, alpha):
     """Direct evaluation of eq. (membership) as written, without log-sum-exp."""
     v = np.asarray(embedding, float)
     v = v / np.linalg.norm(v)
-    z_c = np.exp(alpha * (normalize_rows(text_feats) @ v)).sum()
-    z_n = np.exp(alpha * (normalize_rows(negative_feats) @ v)).sum()
-    return z_c / (z_c + z_n)
+    likelihood_c = np.exp(alpha * (normalize_rows(text_feats) @ v)).mean()
+    likelihood_n = np.exp(alpha * (normalize_rows(negative_feats) @ v)).mean()
+    return likelihood_c / (likelihood_c + likelihood_n)
 
 
-def test_membership_matches_the_ratio_of_partition_sums():
+def test_membership_matches_the_ratio_of_normalized_likelihoods():
     text_feats = np.array([[1.0, 0.0, 0.0], [0.9, 0.4, 0.0]])
     negative_feats = np.array([[0.0, 1.0, 0.0], [0.0, 0.0, 1.0], [0.0, 0.7, 0.7]])
     embedding = np.array([0.8, 0.5, 0.1])
@@ -254,8 +256,32 @@ def test_membership_matches_the_ratio_of_partition_sums():
     assert result["u_mem"] == pytest.approx(1.0 - result["p_mem"])
 
 
-def test_membership_uses_the_full_vocabulary_mass_not_only_the_best_class():
-    """Adding more in-vocabulary classes must raise P_mem."""
+def test_membership_does_not_depend_on_the_size_of_either_set():
+    """Division by |C| and |N| removes the dependence on the set sizes."""
+    embedding = np.array([1.0, 0.0])
+    text_feats = np.array([[1.0, 0.0]])
+    negative_feats = np.array([[0.0, 1.0]])
+    alpha = 5.0
+
+    baseline = compute_vocabulary_membership(
+        embedding, text_feats, negative_feats, logit_scale=alpha
+    )
+    # Duplicating every entry of either set leaves both means unchanged.
+    duplicated = compute_vocabulary_membership(
+        embedding,
+        np.repeat(text_feats, 3, axis=0),
+        np.repeat(negative_feats, 7, axis=0),
+        logit_scale=alpha,
+    )
+
+    assert duplicated["p_mem"] == pytest.approx(baseline["p_mem"])
+    assert baseline["p_mem"] == pytest.approx(
+        np.exp(alpha) / (np.exp(alpha) + 1.0)
+    )
+
+
+def test_membership_uses_the_whole_vocabulary_not_only_the_best_class():
+    """P_mem is the mean likelihood over C, not the best class alone."""
     negative_feats = np.array([[0.0, 1.0]])
     embedding = np.array([1.0, 0.0])
     alpha = 5.0
@@ -263,15 +289,18 @@ def test_membership_uses_the_full_vocabulary_mass_not_only_the_best_class():
     one_class = compute_vocabulary_membership(
         embedding, np.array([[1.0, 0.0]]), negative_feats, logit_scale=alpha
     )
-    # A second, equally similar class doubles Z_C while leaving Z_N unchanged.
-    two_classes = compute_vocabulary_membership(
-        embedding, np.array([[1.0, 0.0], [1.0, 0.0]]), negative_feats, logit_scale=alpha
+    # A second, dissimilar class lowers the mean over C while the best class,
+    # and therefore the assigned label, is unchanged.
+    with_distant_class = compute_vocabulary_membership(
+        embedding, np.array([[1.0, 0.0], [-1.0, 0.0]]), negative_feats, logit_scale=alpha
     )
 
-    assert two_classes["p_mem"] > one_class["p_mem"]
-    z_c = 2 * np.exp(alpha * 1.0)
-    z_n = np.exp(alpha * 0.0)
-    assert two_classes["p_mem"] == pytest.approx(z_c / (z_c + z_n))
+    assert with_distant_class["p_mem"] < one_class["p_mem"]
+    likelihood_c = (np.exp(alpha) + np.exp(-alpha)) / 2.0
+    likelihood_n = 1.0
+    assert with_distant_class["p_mem"] == pytest.approx(
+        likelihood_c / (likelihood_c + likelihood_n)
+    )
 
 
 def test_membership_is_numerically_stable_at_the_clip_logit_scale():
@@ -283,8 +312,8 @@ def test_membership_is_numerically_stable_at_the_clip_logit_scale():
         np.array([1.0, 0.0]), text_feats, negative_feats, logit_scale=100.0
     )
 
-    assert np.isfinite(result["vocab_log_partition"])
-    assert np.isfinite(result["negative_log_partition"])
+    assert np.isfinite(result["vocab_log_likelihood"])
+    assert np.isfinite(result["negative_log_likelihood"])
     assert 0.0 <= result["p_mem"] <= 1.0
     assert result["p_mem"] > 1.0 - 1e-12  # strongly in-vocabulary
 
