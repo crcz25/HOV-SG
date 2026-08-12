@@ -5,6 +5,9 @@ done
 # Run scene graph creation for each scene
 cd /workspace/HOV-SG && python application/create_graph.py main.dataset=hm3dsem main.dataset_path=/workspace/HOV-SG/data/hm3dsem_walks main.split=val main.scene_id=00824-Dd4bFSTQ8gi main.save_path=/workspace/HOV-SG/data/scene_graphs
 
+# Visualize the scene graphs for each scene
+python application/visualize_graph.py graph_path=data/scene_graphs/hm3dsem/00824-Dd4bFSTQ8gi/graph
+
 bash zip_scene_graphs.sh hm3dsem/00824-Dd4bFSTQ8gi
 
 # Run all via the bash script, which will skip the README evaluation scenes unless --include-excluded is specified.

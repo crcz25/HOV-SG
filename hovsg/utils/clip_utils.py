@@ -62,7 +62,7 @@ def get_nn_img(raw_imgs, text_feats, img_feats):
     return high_to_low_ids, high_to_low_imgs, high_to_low_scores
 
 
-def get_img_feats(img, preprocess, clip_model):
+def get_img_feats(img, preprocess, clip_model, device=None):
     """
     Get the image features from the CLIP model
     :param img (np.array): the image to get the features from
@@ -70,16 +70,17 @@ def get_img_feats(img, preprocess, clip_model):
     :param clip_model (CLIP): the CLIP model
     :return: the image features
     """
+    device = torch.device(device) if device is not None else next(clip_model.parameters()).device
     img_pil = Image.fromarray(np.uint8(img))
     img_in = preprocess(img_pil)[None, ...]
     with torch.no_grad():
-        img_feats = clip_model.encode_image(img_in.cuda()).float()
+        img_feats = clip_model.encode_image(img_in.to(device)).float()
     img_feats = torch.nn.functional.normalize(img_feats, dim=-1)
     img_feats = np.float32(img_feats.cpu())
     return img_feats
 
 
-def get_img_feats_batch(imgs, preprocess, clip_model):
+def get_img_feats_batch(imgs, preprocess, clip_model, device=None):
     """
     Get the image features from the CLIP model for a batch of images
     :param imgs (list): the images to get the features from
@@ -87,10 +88,11 @@ def get_img_feats_batch(imgs, preprocess, clip_model):
     :param clip_model (CLIP): the CLIP model
     :return: the image features
     """
+    device = torch.device(device) if device is not None else next(clip_model.parameters()).device
     imgs_pil = [Image.fromarray(np.uint8(img)) for img in imgs]
     imgs_in = torch.stack([preprocess(img_pil) for img_pil in imgs_pil])
     with torch.no_grad():
-        img_feats = clip_model.encode_image(imgs_in.cuda()).float()
+        img_feats = clip_model.encode_image(imgs_in.to(device)).float()
     img_feats = torch.nn.functional.normalize(img_feats, dim=-1)
     img_feats = np.float32(img_feats.cpu())
     return img_feats
@@ -121,6 +123,7 @@ def get_imgs_feats_batch(raw_imgs, preprocess, clip_model, clip_feat_dim, batch_
     :param batch_size (int): the batch size for the inference
     :return: the image features
     """
+    device = next(clip_model.parameters()).device
     imgs_feats = np.zeros((len(raw_imgs), clip_feat_dim))
     img_batch = []
     for img_id, img in enumerate(raw_imgs):
@@ -132,7 +135,7 @@ def get_imgs_feats_batch(raw_imgs, preprocess, clip_model, clip_feat_dim, batch_
         if len(img_batch) == batch_size or img_id == len(raw_imgs) - 1:
             img_batch = torch.cat(img_batch, dim=0)
             with torch.no_grad():
-                batch_feats = clip_model.encode_image(img_batch.cuda()).float()
+                batch_feats = clip_model.encode_image(img_batch.to(device)).float()
             batch_feats /= batch_feats.norm(dim=-1, keepdim=True)
             batch_feats = np.float32(batch_feats.cpu())
             imgs_feats[img_id - len(img_batch) + 1 : img_id + 1, :] = batch_feats
@@ -140,7 +143,7 @@ def get_imgs_feats_batch(raw_imgs, preprocess, clip_model, clip_feat_dim, batch_
     return imgs_feats
 
 
-def get_text_feats(in_text, clip_model, clip_feat_dim, batch_size=64):
+def get_text_feats(in_text, clip_model, clip_feat_dim, batch_size=64, device=None):
     """
     Get the text features from the CLIP model
     :param in_text (list): the text to get the features from
@@ -150,7 +153,8 @@ def get_text_feats(in_text, clip_model, clip_feat_dim, batch_size=64):
     :return: the text features
     """
     # in_text = ["a {} in the scene.".format(in_text)]
-    text_tokens = open_clip.tokenize(in_text).cuda()
+    device = torch.device(device) if device is not None else next(clip_model.parameters()).device
+    text_tokens = open_clip.tokenize(in_text).to(device)
     text_id = 0
     text_feats = np.zeros((len(in_text), clip_feat_dim), dtype=np.float32)
     while text_id < len(text_tokens):  # Batched inference.

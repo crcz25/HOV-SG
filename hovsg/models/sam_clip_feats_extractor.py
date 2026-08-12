@@ -16,7 +16,14 @@ from hovsg.utils.sam_utils import crop_all_bounding_boxs, filter_masks
 
 
 def extract_feats_raw(
-    image, mask_generator, clip_model, preprocess, clip_feat_dim=768, bbox_margin=0, maskedd_weight=0.75
+    image,
+    mask_generator,
+    clip_model,
+    preprocess,
+    clip_feat_dim=768,
+    bbox_margin=0,
+    maskedd_weight=0.75,
+    device=None,
 ):
     """
     estimate the feature for each pixel in the image.
@@ -35,6 +42,7 @@ def extract_feats_raw(
         croped_images: croped images.
         croped_images_masked: croped images with masked background.
     """
+    device = torch.device(device) if device is not None else next(clip_model.parameters()).device
     LOAD_IMG_HEIGHT, LOAD_IMG_WIDTH = image.shape[0], image.shape[1]
     # run SAM on the full image.
     masks = mask_generator.generate(image)
@@ -53,12 +61,14 @@ def extract_feats_raw(
         f_l = torch.nn.functional.normalize(torch.from_numpy(f_l), p=2, dim=-1).cpu().numpy()
         F_l.append(f_l)
     F_l = np.array(F_l)
-    F_l = torch.from_numpy(F_l).cuda()
+    F_l = torch.from_numpy(F_l).to(device)
     F_masks = F_l
     # interpolate F_p to the original image size
-    outfeat = torch.zeros(LOAD_IMG_HEIGHT, LOAD_IMG_WIDTH, clip_feat_dim).cuda()
+    outfeat = torch.zeros(LOAD_IMG_HEIGHT, LOAD_IMG_WIDTH, clip_feat_dim, device=device)
     for i, mask in enumerate(masks):
-        non_zero_indices = torch.argwhere(torch.from_numpy(np.array(mask["segmentation"])) == 1).cuda()
+        non_zero_indices = torch.argwhere(
+            torch.from_numpy(np.array(mask["segmentation"])) == 1
+        ).to(device)
         outfeat[non_zero_indices[:, 0], non_zero_indices[:, 1], :] += F_l[i, :]
         outfeat[non_zero_indices[:, 0], non_zero_indices[:, 1], :] = torch.nn.functional.normalize(
             outfeat[non_zero_indices[:, 0], non_zero_indices[:, 1], :], p=2, dim=-1
@@ -75,6 +85,7 @@ def extract_feats_per_pixel(
     clip_feat_dim=768,
     bbox_margin=0,
     maskedd_weight=0.75,
+    device=None,
 ):
     """
     estimate the feature for each pixel in the image using ConceptFusion method.
@@ -95,6 +106,7 @@ def extract_feats_per_pixel(
         croped_images_masked: croped images with masked background.
         F_g: global CLIP embedding for the image
     """
+    device = torch.device(device) if device is not None else next(clip_model.parameters()).device
     LOAD_IMG_HEIGHT, LOAD_IMG_WIDTH = image.shape[0], image.shape[1]
     masks = None
 
@@ -106,14 +118,16 @@ def extract_feats_per_pixel(
     cropped_masked_feats = None
     cropped_feats = None
     if F_g is None and cropped_masked_feats is None and cropped_feats is None:
-        F_g = get_img_feats(image, preprocess, clip_model)
+        F_g = get_img_feats(image, preprocess, clip_model, device=device)
         # crop all masks above certain thershold.
         croped_images = crop_all_bounding_boxs(image, masks, block_background=False, bbox_margin=bbox_margin)
         croped_images_masked = crop_all_bounding_boxs(image, masks, block_background=True, bbox_margin=bbox_margin)
         number_of_masks = len(croped_images)
         # run CLIP on all cropped images.
-        cropped_masked_feats = get_img_feats_batch(croped_images_masked, preprocess, clip_model)
-        cropped_feats = get_img_feats_batch(croped_images, preprocess, clip_model)
+        cropped_masked_feats = get_img_feats_batch(
+            croped_images_masked, preprocess, clip_model, device=device
+        )
+        cropped_feats = get_img_feats_batch(croped_images, preprocess, clip_model, device=device)
     fused_crop_feats = torch.from_numpy(maskedd_weight * cropped_masked_feats + (1 - maskedd_weight) * cropped_feats)
     F_l = torch.nn.functional.normalize(fused_crop_feats, p=2, dim=-1).cpu().numpy()
     if F_l.shape[0] == 0:
@@ -127,11 +141,11 @@ def extract_feats_per_pixel(
     # 6. normalize F_p (TODO: no need because F_l and F_g are already normalized, and normalize is costly)
     F_p = torch.nn.functional.normalize(F_p, p=2, dim=-1)
     # 7. interpolate F_p to the original image size
-    F_p = F_p.cuda()
-    outfeat = torch.zeros(LOAD_IMG_HEIGHT * LOAD_IMG_WIDTH, clip_feat_dim, device="cuda")
+    F_p = F_p.to(device)
+    outfeat = torch.zeros(LOAD_IMG_HEIGHT * LOAD_IMG_WIDTH, clip_feat_dim, device=device)
     non_zero_ids = torch.from_numpy(np.array([mask["segmentation"] for mask in masks])).reshape((len(masks), -1))
     for i, mask in enumerate(masks):
-        non_zero_indices = torch.argwhere(non_zero_ids[i] == 1).cuda()
+        non_zero_indices = torch.argwhere(non_zero_ids[i] == 1).to(device)
         outfeat[non_zero_indices, :] += F_p[i, :]
     outfeat = torch.nn.functional.normalize(outfeat, p=2, dim=-1)
     outfeat = outfeat.half()

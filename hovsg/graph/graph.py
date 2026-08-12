@@ -143,7 +143,18 @@ class Graph:
         self.graph = nx.Graph()
         self.graph.add_node(0, name="building", type="building")
         self.room_masks = {}
-        self.device = "cuda" if torch.cuda.is_available() else "cpu"
+        configured_device = str(getattr(self.cfg.main, "device", "cuda"))
+        if configured_device.startswith("cuda") and torch.cuda.is_available():
+            # Keep the index configurable instead of silently using CUDA:0.
+            # An explicit index in ``device`` takes precedence for backwards
+            # compatibility with configurations such as ``device: cuda:0``.
+            if ":" in configured_device:
+                self.device = configured_device
+            else:
+                cuda_device = int(getattr(self.cfg.main, "cuda_device", 0))
+                self.device = f"cuda:{cuda_device}"
+        else:
+            self.device = "cpu"
 
         # load CLIP model
         if self.cfg.models.clip.type == "ViT-L/14@336px":
@@ -247,6 +258,7 @@ class Graph:
                 clip_feat_dim=self.clip_feat_dim,
                 bbox_margin=self.cfg.pipeline.clip_bbox_margin,
                 maskedd_weight=self.cfg.pipeline.clip_masked_weight,
+                device=self.device,
             )
             F_2D = F_2D.cpu()
             pcd = self.dataset.create_pcd(rgb_image, depth_image, pose)
@@ -649,7 +661,9 @@ class Graph:
         all_global_clip_feats = dict()
         for i, img_id in tqdm(enumerate(range(0, len(self.dataset), self.cfg.pipeline.skip_frames)), desc="Computing room features"):
             rgb_image, _, pose, _, _ = self.dataset[img_id]
-            F_g = get_img_feats(np.array(rgb_image), self.preprocess, self.clip_model)
+            F_g = get_img_feats(
+                np.array(rgb_image), self.preprocess, self.clip_model, device=self.device
+            )
             all_global_clip_feats[str(img_id)] = F_g
             rgb_list.append(rgb_image)
             pose_list.append(pose)
