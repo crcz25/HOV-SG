@@ -34,4 +34,3 @@ pipeline:
   merge_type: hierarchical # hierarchical, sequential
   save_intermediate_results: false
   obj_labels: HM3DSEM_LABELS
-  merge_objects_graph: false

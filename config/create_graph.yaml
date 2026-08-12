@@ -73,5 +73,8 @@ pipeline:
   # that dependence); this only bounds the encoding and storage cost of the
   # mined bank. null keeps the whole bank.
   vocab_membership_negative_label_count: null
-  merge_objects_graph: false
-  room_belief_merge_threshold: 0.5
+  # --- Object-to-room propagation -------------------------------------------
+  # The room-level class containment belief is the noisy-OR of the fused
+  # object probabilities of the objects assigned to the room and labeled c:
+  #   b(r, c) = 1 - prod_{o_i in O(r, c)} (1 - q_i).
+  # No parameters.

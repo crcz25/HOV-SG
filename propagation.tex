@@ -1,0 +1,71 @@
+\subsection{Propagation through the Hierarchy}
+\label{sec:propagation}
+
+\subsubsection{Object-Level Probability}
+\label{sec:object-probability}
+
+Let $E^{}_s$ denote the event that the detection is real; $E^{}_{\mathrm{view}}$ that the fusion produced an embedding representing a single object; $E^{}_{\mathrm{mem}}$ that the object belongs to the vocabulary; and $E^{}_{\mathrm{sem}}$ that the assigned class is correct. An entry is reliable exactly when all four events hold jointly. The chain rule of probability factorizes $q^{}_i = P(E^{}_s, E^{}_{\mathrm{view}}, E^{}_{\mathrm{mem}}, E^{}_{\mathrm{sem}})$ exactly, and this factorization holds under any ordering of the four events. We order them as a detection first, its per-view observations fused second, and the vocabulary and label comparisons evaluated last, since this is the order in which the pipeline computes the underlying quantities $s^{}_i$, $P^{\mathrm{view}}_i$, $P^{\mathrm{mem}}_i$, and $\bar{P}^{\mathrm{sem}}_i$: each quantity is computed only from the evidence available up to its own stage, so each is a natural estimate of the probability of its event conditioned on the events computed before it.
+The factorization reads
+
+\begin{equation}
+    \begin{aligned}
+        q^{}_i ={}& P(E^{}_s)\;
+        P\bigl(E^{}_{\mathrm{view}} \mid E^{}_s\bigr)\; \\
+        &\times P\bigl(E^{}_{\mathrm{mem}} \mid E^{}_s, E^{}_{\mathrm{view}}\bigr)\; \\
+        &\times P\bigl(E^{}_{\mathrm{sem}} \mid E^{}_s, E^{}_{\mathrm{view}}, E^{}_{\mathrm{mem}}\bigr) .
+    \end{aligned}
+    \label{eq:obj-prob-chain}
+\end{equation}
+
+Each factor is then estimated by one stored quantity,
+\begin{equation}
+    \begin{aligned}
+        s^{}_i &\approx P(E^{}_s), \\
+        P^{\mathrm{view}}_i &\approx P\bigl(E^{}_{\mathrm{view}} \mid E^{}_s\bigr), \\
+        P^{\mathrm{mem}}_i &\approx P\bigl(E^{}_{\mathrm{mem}} \mid E^{}_s, E^{}_{\mathrm{view}}\bigr), \\
+        \bar{P}^{\mathrm{sem}}_i &\approx P\bigl(E^{}_{\mathrm{sem}} \mid E^{}_s, E^{}_{\mathrm{view}}, E^{}_{\mathrm{mem}}\bigr),
+    \end{aligned}
+    \label{eq:obj-prob-subst}
+\end{equation}
+which gives
+\begin{equation}
+    q^{}_i \approx s^{}_i \, P^{\mathrm{view}}_i \, P^{\mathrm{mem}}_i \, \bar{P}^{\mathrm{sem}}_i .
+    \label{eq:obj-prob}
+\end{equation}
+
+Each of $s^{}_i$, $P^{\mathrm{view}}_i$, and $P^{\mathrm{mem}}_i$ is computed independently of the others
+: $s^{}_i$ from the image region alone, $P^{\mathrm{view}}_i$ from the agreement between the per-view embeddings, and $P^{\mathrm{mem}}_i$ from the comparison of $\mathbf{v}^{}_i$ to $\mathcal{C}$ and $\mathcal{N}$ in \cref{eq:membership}. None of the three is computed by explicitly conditioning on the outcome of the events that precede it in \cref{eq:obj-prob-chain}, so using it as an estimate of the corresponding conditional probability is an approximation.
+The last substitution holds by construction. $P^{\mathrm{mem}}_i$ (\cref{eq:membership}) estimates the probability that the true class of $o^{}_i$ belongs to $\mathcal{C}$, while $\bar{P}^{\mathrm{sem}}_i$ (\cref{eq:coherence}) compares classes already known to lie in $\mathcal{C}$, so its value is only meaningful once vocabulary membership is established. Both quantities are computed from the same similarities between $\mathbf{v}^{}_i$ and $\{\mathbf{t}^{}_c\}$ (or, for the coherence term, $\{\boldsymbol{\mu}^{}_c\}$); multiplying their two marginal probabilities directly would count the evidence carried by $\mathbf{v}^{}_i$ twice. Conditioning $\bar{P}^{\mathrm{sem}}_i$ on $E^{}_{\mathrm{mem}}$, as \cref{eq:obj-prob-chain} does, avoids this double counting.
+
+The four quantities $s^{}_i$, $P^{\mathrm{view}}_i$, $P^{\mathrm{mem}}_i$, and $\bar{P}^{\mathrm{sem}}_i$ are all computed from observations of the same object $o^{}_i$, so any factor that degrades the quality of those observations tends to affect the four quantities together, rather independently. The four events are therefore positively associated, and their joint probability is at least the product of the marginals~\cite{esary1967association},
+\begin{equation}
+    q^{}_i \;\geq\; s^{}_i \, P^{\mathrm{view}}_i \, P^{\mathrm{mem}}_i \, \bar{P}^{\mathrm{sem}}_i ,
+    \label{eq:obj-prob-bound}
+\end{equation}
+so \cref{eq:obj-prob} is a lower bound on $q^{}_i$: treating the four events as independent cannot overestimate the true probability that the entry is reliable.
+
+\subsubsection{Probability Propagation}
+\label{sec:probability-propagation}
+
+Let $\mathcal{O}(r) = \{o^{}_i : r(o^{}_i) = r\}$ be the objects assigned to room $r$. \Cref{eq:obj-prob} defines $q^{}_i$ as the probability that $o^{}_i$ is a correct instance of $\ell^{}_i$; we extend this to $q^{}_i(c)$, the probability that $o^{}_i$ is an instance of an arbitrary class $c \in \mathcal{C}$, with $q^{}_i(\ell^{}_i) = q^{}_i$. Room $r$ contains an instance of class $c$ if at least one $o^{}_i \in \mathcal{O}(r)$ is an instance of $c$; treating this event as independent across objects yields the room-level belief
+\begin{equation}
+    b(r, c) = 1 - \prod_{o_i \in \mathcal{O}(r)} \bigl(1 - q^{}_i(c)\bigr).
+    \label{eq:noisyor-general}
+\end{equation}
+
+We evaluate \cref{eq:noisyor-general} over the objects the pipeline labeled $c$, $\mathcal{O}(r, c) = \{o^{}_i \in \mathcal{O}(r) : \ell^{}_i = c\}$,
+\begin{equation}
+    b(r, c) \approx 1 - \prod_{o_i \in \mathcal{O}(r, c)} \bigl(1 - q^{}_i\bigr).
+    \label{eq:noisyor}
+\end{equation}
+
+Restricting the product in \cref{eq:noisyor} to $\mathcal{O}(r,c)$ removes the terms $q^{}_i(c)$ for objects $o^{}_i$ labeled a class other than $c$. Since each removed term is non-negative, \cref{eq:noisyor} is less than or equal to \cref{eq:noisyor-general}, and the removed terms are largest for objects whose label is easily confused with $c$.
+
+Treating the objects in $\mathcal{O}(r,c)$ as independent in \cref{eq:noisyor} is a separate approximation. These objects are labeled by the same detector, against the same vocabulary, and from the same trajectory, so a single error in any of these three components can mislabel several of them for the same underlying reason.
+This raises the value of \cref{eq:noisyor} above what \cref{eq:noisyor-general} would give under the same restriction to $\mathcal{O}(r,c)$.
+We retain \cref{eq:noisyor} for its closed form. Over $\mathcal{O}(r,c)$, and conditional on each $q^{}_i$ being an accurate per-object probability, the belief is bracketed regardless of the correlation among objects as
+\begin{equation}
+    \max_i q^{}_i \;\leq\; b(r,c) \;\leq\; 1 - \prod_{o_i \in \mathcal{O}(r,c)} \bigl(1 - q^{}_i\bigr).
+    \label{eq:bracket}
+\end{equation}
+The lower bound holds unconditionally, since a single correctly labeled object is sufficient for $c$ to be present in $r$, so $b(r,c)$ is at least the probability of the most reliable object being correct.

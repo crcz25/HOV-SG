@@ -11,9 +11,7 @@ import numpy as np
 import open3d as o3d
 
 from hovsg.utils.clip_utils import get_img_feats, get_text_feats_multiple_templates
-from hovsg.utils.eval_utils import find_overlapping_ratio
-
-
+from hovsg.utils.uncertainty import compute_class_containment_belief
 
 
 class Room:
@@ -40,6 +38,8 @@ class Room:
         self.room_zero_level = None  # Zero level of the room
         self.represent_images = []  # 5 images that represent the appearance of the room
         self.object_counter = 0
+        # eq. (noisyor) per class instantiated in this room, as
+        # {"class_id", "class_label", "belief"} entries.
         self.class_containment_belief = []
 
     def add_object(self, objectt):
@@ -68,73 +68,6 @@ class Room:
 
     def set_txt_embeddings(self, text):
         self.embeddings.append(get_text_feats_multiple_templates(text))
-
-    def merge_objects(self, overlap_threshold=0.01, radius=0.1):
-        """
-        Merge objects that are close to each other and have the same name
-        """
-        # for every object in the room with the same name, calculate the overlap between them
-        # if the overlap is more than the threshold, merge them
-        # repeat until no more merging is possible
-
-        overlap_scores = np.zeros((len(self.objects), len(self.objects)))
-        for i, obj1 in enumerate(self.objects):
-            for j, obj2 in enumerate(self.objects):
-                if i >= j:
-                    continue
-                if obj1.name == obj2.name:
-                    overlap = find_overlapping_ratio(obj1.pcd, obj2.pcd, radius)
-                    if overlap > overlap_threshold:
-                        overlap_scores[i, j] = overlap
-                        overlap_scores[j, i] = overlap
-
-        new_room_objects = defaultdict(list)
-        merging_idcs = list()
-        i_idcs, j_idcs = np.where(overlap_scores > 0)
-        for i, j in zip(i_idcs, j_idcs):
-            merging_idcs.extend([i, j])
-            if i not in list(new_room_objects.keys()) and j not in list(new_room_objects.keys()):
-                new_room_objects[i].append(j)
-            else:
-                if i in list(new_room_objects.keys()):
-                    new_room_objects[i].append(j)
-                elif j in list(new_room_objects.keys()):
-                    new_room_objects[j].append(i)
-        # Add all remaning objects not involved in merging
-        merging_idcs = list(set(merging_idcs))
-        for idx in range(len(self.objects)):
-            if idx not in merging_idcs:
-                new_room_objects[idx].append(idx)
-
-        # actual merging and re-indexing
-        object_index = 0
-        self.objects_new = []
-        for i, j in new_room_objects.items():
-            j = list(set(j))
-            print(i, j)
-            if len(j) == 1:
-                jj = j[0]
-                if i == jj:
-                    obj = self.objects[i]
-                    obj.object_id = self.room_id + "_" + str(object_index)
-                    self.objects_new.append(obj)
-                    object_index += 1
-                if i != jj:
-                    obj1 = self.objects[i]
-                    obj2 = self.objects[jj]
-                    obj1 += obj2
-                    obj1.object_id = self.room_id + "_" + str(object_index)
-                    self.objects_new.append(obj1)
-                    object_index += 1
-            elif len(j) > 1:
-                obj1 = self.objects[i]
-                for jj in j:
-                    obj_jj = self.objects[jj]
-                    obj1 += obj_jj
-                    obj1.object_id = self.room_id + "_" + str(object_index)
-                self.objects_new.append(obj1)
-                object_index += 1
-        self.objects = self.objects_new
 
     def infer_room_type_from_view_embedding(
         self,
@@ -235,135 +168,48 @@ class Room:
             self.name = default_room_types[col_id]
         print("room_id, name: ", self.room_id, self.name)
 
-    @staticmethod
-    def _aabb_iou(object1, object2):
-        """Return AABB IoU for objects whose point clouds are unavailable."""
-        bounds = []
-        for objectt in (object1, object2):
-            vertices = getattr(objectt, "vertices", None)
-            if vertices is None and getattr(objectt, "pcd", None) is not None:
-                pcd = objectt.pcd
-                if hasattr(pcd, "get_axis_aligned_bounding_box"):
-                    vertices = pcd.get_axis_aligned_bounding_box().get_box_points()
-            try:
-                vertices = np.asarray(vertices, dtype=np.float64)
-            except (TypeError, ValueError):
-                return 0.0
-            if vertices.ndim != 2 or vertices.shape[0] == 0 or vertices.shape[1] < 3:
-                return 0.0
-            bounds.append((vertices[:, :3].min(axis=0), vertices[:, :3].max(axis=0)))
+    def group_objects_by_class(self):
+        """Return this room's objects grouped by their assigned label.
 
-        intersection_min = np.maximum(bounds[0][0], bounds[1][0])
-        intersection_max = np.minimum(bounds[0][1], bounds[1][1])
-        intersection = np.prod(np.maximum(intersection_max - intersection_min, 0.0))
-        volumes = [np.prod(np.maximum(high - low, 0.0)) for low, high in bounds]
-        union = volumes[0] + volumes[1] - intersection
-        if union <= 0.0:
-            return 1.0 if np.array_equal(bounds[0][0], bounds[1][0]) and np.array_equal(
-                bounds[0][1], bounds[1][1]
-            ) else 0.0
-        return float(intersection / union)
+        The groups are the sets O(r, c) = {o_i in O(r) : l_i = c} of
+        eq. (noisyor), keyed by the class id c.  Only the objects added to
+        this room are considered, so no object contributes to a room it is not
+        assigned to, and each object enters exactly one group: the one of the
+        single class the pipeline labeled it.
 
-    @classmethod
-    def _spatial_overlap(cls, object1, object2):
-        """Use the existing point-cloud overlap metric, with an AABB fallback.
-
-        The primary metric is the symmetric fraction of points with a nearest
-        neighbour within 0.02 metres, as implemented by
-        ``hovsg.utils.eval_utils.find_overlapping_ratio``.
+        An object whose fused probability q_i is undefined is left out.  The
+        paper's product has no factor for a missing q_i, and substituting one
+        would report a belief the evidence does not support.
         """
-        points = []
-        for objectt in (object1, object2):
-            pcd = getattr(objectt, "pcd", None)
-            candidate = getattr(pcd, "points", None) if pcd is not None else None
-            try:
-                candidate = np.asarray(candidate, dtype=np.float64)
-            except (TypeError, ValueError):
-                candidate = np.empty((0, 3), dtype=np.float64)
-            if candidate.ndim != 2 or candidate.shape[0] == 0 or candidate.shape[1] < 3:
-                points = []
-                break
-            points.append(candidate[:, :3])
-        if len(points) == 2:
-            return float(find_overlapping_ratio(points[0], points[1], radius=0.02))
-        return cls._aabb_iou(object1, object2)
-
-    @classmethod
-    def merge_object_groups(cls, objects, overlap_threshold=0.5):
-        """Return connected duplicate groups without mutating the objects."""
-        threshold = float(overlap_threshold)
-        if not 0.0 <= threshold <= 1.0:
-            raise ValueError("room_belief_merge_threshold must be in [0, 1]")
-        objects = list(objects)
-        parent = list(range(len(objects)))
-
-        def find(index):
-            while parent[index] != index:
-                parent[index] = parent[parent[index]]
-                index = parent[index]
-            return index
-
-        def union(left, right):
-            left, right = find(left), find(right)
-            if left != right:
-                parent[right] = left
-
-        # At the metric's minimum, the configured endpoint intentionally means
-        # "disable duplicate merging" for sanity checks and ablations.
-        if threshold > 0.0:
-            for left in range(len(objects)):
-                for right in range(left + 1, len(objects)):
-                    if cls._spatial_overlap(objects[left], objects[right]) >= threshold:
-                        union(left, right)
-
-        groups = defaultdict(list)
-        for index, objectt in enumerate(objects):
-            groups[find(index)].append(objectt)
-        return list(groups.values())
-
-    def compute_fused_class_containment_beliefs(self, merge_threshold=0.5):
-        """Propagate fused object probabilities to this room by class."""
         objects_by_class = defaultdict(list)
         for objectt in self.objects:
             label_idx = getattr(objectt, "label_idx", None)
-            probability = getattr(objectt, "p_obj", None)
-            if label_idx is None or probability is None:
+            if label_idx is None or getattr(objectt, "p_obj", None) is None:
                 continue
             objects_by_class[int(label_idx)].append(objectt)
+        return objects_by_class
 
-        beliefs = []
-        for class_idx, objects in objects_by_class.items():
-            groups = self.merge_object_groups(objects, merge_threshold)
-            group_probabilities = [
-                max(float(np.clip(objectt.p_obj, 0.0, 1.0)) for objectt in group)
-                for group in groups
-            ]
-            anchor_probability = float(max(group_probabilities))
-            # This is algebraically the noisy-OR product, evaluated from its
-            # maximum term so the calculation is exact in floating point as
-            # well as in real arithmetic.
-            belief = anchor_probability
-            max_consumed = False
-            for probability in group_probabilities:
-                if probability == anchor_probability and not max_consumed:
-                    max_consumed = True
-                    continue
-                belief += (1.0 - belief) * probability
-            belief = float(np.clip(belief, 0.0, 1.0))
-            assert belief >= anchor_probability, (
-                f"Noisy-OR belief {belief} is below its maximum component "
-                f"{anchor_probability} for class {class_idx} in room {self.room_id}"
-            )
-            beliefs.append(
-                {
-                    "class_id": class_idx,
-                    "class_label": objects[0].name,
-                    "belief": belief,
-                }
-            )
+    def compute_class_containment_beliefs(self):
+        """Propagate the objects' q_i to one room-level belief per class.
 
-        self.class_containment_belief = beliefs
-        return beliefs
+        Applies eq. (noisyor) independently to every class instantiated in
+        this room and stores the result in ``class_containment_belief`` as one
+        entry per class, ordered by class id so the room node is independent
+        of the order the objects were added in.
+        """
+        self.class_containment_belief = [
+            {
+                "class_id": class_id,
+                # Every object in O(r, c) was labeled c, so they all carry
+                # the same class name.
+                "class_label": objects[0].name,
+                "belief": compute_class_containment_belief(
+                    objectt.p_obj for objectt in objects
+                ),
+            }
+            for class_id, objects in sorted(self.group_objects_by_class().items())
+        ]
+        return self.class_containment_belief
 
     def save(self, path):
         """

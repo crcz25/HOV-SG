@@ -230,41 +230,6 @@ def compute_3d_iou(pcd1, pcd2, padding=0):
     return iou
 
 
-def find_overlapping_ratio(pcd1, pcd2, radius=0.02):
-    """
-    Calculate the percentage of overlapping points between two point clouds using KD-Trees.
-
-    Parameters:
-    pcd1 (numpy.ndarray): Point cloud 1, shape (n1, 3).
-    pcd2 (numpy.ndarray): Point cloud 2, shape (n2, 3).
-    radius (float): Radius for KD-Tree query (adjust based on point density).
-
-    Returns:
-    float: Overlapping ratio between 0 and 1.
-    """
-    if type(pcd1) == o3d.geometry.PointCloud and type(pcd2) == o3d.geometry.PointCloud:
-        pcd1 = np.asarray(pcd1.points)
-        pcd2 = np.asarray(pcd2.points)
-    tree_pcd2 = cKDTree(pcd2)
-    tree_pcd1 = cKDTree(pcd1)
-
-    # Query all points in pcd1 for nearby points in pcd2
-    _, indices1 = tree_pcd2.query(pcd1, k=1, distance_upper_bound=radius, p=2, workers=-1)
-    _, indices2 = tree_pcd1.query(pcd2, k=1, distance_upper_bound=radius, p=2, workers=-1)
-
-    # Remove indices that are out of range
-    indices1 = indices1[indices1 != pcd2.shape[0]]
-    indices2 = indices2[indices2 != pcd1.shape[0]]
-
-    # Calculate the overlapping ratio, handle the case where one of the point clouds is empty
-    if pcd1.shape[0] == 0 or pcd2.shape[0] == 0:
-        overlapping_ratio = 0
-    else:
-        overlapping_ratio = (len(indices1) + len(indices2)) / (pcd1.shape[0] + pcd2.shape[0])
-
-    return overlapping_ratio
-
-
 def sim_2_label(similarity, labels_id):
     """
     Convert similarity matrix to labels

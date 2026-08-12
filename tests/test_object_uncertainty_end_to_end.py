@@ -5,6 +5,7 @@ fusion -> object node -> merge -> recomputation -> serialization, checking that
 every signal survives each step with the value the equations prescribe.
 """
 
+import itertools
 import json
 from types import MethodType, SimpleNamespace
 
@@ -19,21 +20,18 @@ from hovsg.graph.object import Object
 from hovsg.graph.room import Room
 from hovsg.utils.cross_view_consistency import (
     accumulate_unit_embeddings,
-    cross_view_values,
+    compute_cross_view_consistency,
 )
 from hovsg.utils.detection_uncertainty import (
     accumulate_confidence,
     confidence_from_sum,
     finalize_confidence_array,
     object_confidence_sum_from_points,
-    uncertainty_from_confidence,
 )
 from hovsg.utils.uncertainty import (
     COHERENCE_FIELDS,
     MEMBERSHIP_FIELDS,
-    OBJECT_FIELDS,
     SEMANTIC_FIELDS,
-    build_synonym_eligibility_mask,
     normalize_rows,
 )
 
@@ -42,8 +40,16 @@ ALL_SIGNAL_FIELDS = (
     SEMANTIC_FIELDS
     + MEMBERSHIP_FIELDS
     + COHERENCE_FIELDS
-    + OBJECT_FIELDS
-    + ("p_det", "u_det", "p_view", "u_view")
+    + (
+        "p_sem_bar",  # eq. (coherence)
+        "u_sem_bar",
+        "p_det",
+        "u_det",
+        "p_view",
+        "u_view",
+        "p_obj",
+        "u_obj",
+    )
 )
 
 
@@ -84,17 +90,21 @@ def test_multi_view_accumulation_feeds_the_object_node():
     np.testing.assert_array_equal(cross_view_count, [3, 3])
     np.testing.assert_allclose(cross_view_sum[1], [0.0, 3.0, 0.0])
 
-    # Object roll-up over both points.
+    # Object roll-up over both points: six unit observations, of which four are
+    # +y, two are +x and one is +z. c_bar is the mean over the 15 pairs.
     object_sum = cross_view_sum.sum(axis=0)
     object_count = int(cross_view_count.sum())
-    p_view, u_view, sufficient = cross_view_values(
-        object_sum, object_count, min_observations=2, point_count=n_points
-    )
+    p_view, u_view = compute_cross_view_consistency(object_sum, object_count)
 
-    expected = float(np.linalg.norm(object_sum / object_count))
-    assert p_view == pytest.approx(expected)
-    assert u_view == pytest.approx(1.0 - expected)
-    assert sufficient is True  # 6 observations over 2 points = 3 views per point
+    observations = [
+        np.array([1.0, 0.0, 0.0]),
+        np.array([1.0, 0.0, 0.0]),
+        np.array([0.0, 0.0, 1.0]),
+    ] + [np.array([0.0, 1.0, 0.0])] * 3
+    pairs = list(itertools.combinations(observations, 2))
+    expected_mean_cosine = float(np.mean([np.dot(a, b) for a, b in pairs]))
+    assert p_view == pytest.approx((1.0 + expected_mean_cosine) / 2.0)
+    assert u_view == pytest.approx(1.0 - p_view)
 
     # Detection: the mean predicted_iou is the same at every point here.
     full_conf = finalize_confidence_array(sum_conf, counter_conf)
@@ -104,24 +114,6 @@ def test_multi_view_accumulation_feeds_the_object_node():
         full_conf, tree, np.array([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]])
     )
     assert confidence_from_sum(conf_sum, count) == pytest.approx(0.8)
-
-
-def test_later_views_update_an_existing_accumulator_incrementally():
-    """A running mean, not a batch recomputation: adding a view updates it."""
-    sums, counts = np.zeros((1, 2)), np.zeros(1, dtype=np.int64)
-
-    accumulate_unit_embeddings(sums, counts, np.array([0]), np.array([[1.0, 0.0]]))
-    after_one, _, _ = cross_view_values(sums[0], int(counts[0]))
-    assert after_one == pytest.approx(1.0)
-
-    accumulate_unit_embeddings(sums, counts, np.array([0]), np.array([[0.0, 1.0]]))
-    after_two, _, _ = cross_view_values(sums[0], int(counts[0]))
-    assert after_two == pytest.approx(np.sqrt(2.0) / 2.0)
-
-    # A third, agreeing view pulls consistency back up.
-    accumulate_unit_embeddings(sums, counts, np.array([0]), np.array([[1.0, 0.0]]))
-    after_three, _, _ = cross_view_values(sums[0], int(counts[0]))
-    assert after_three > after_two
 
 
 # ---------------------------------------------------------------------------
@@ -148,9 +140,6 @@ def synthetic_graph(monkeypatch, tmp_path):
             obj_labels="synthetic",
             semantic_uncertainty_logit_scale=10.0,
             semantic_uncertainty_synonym_threshold=0.75,
-            label_coherence_logit_scale=10.0,
-            label_coherence_synonym_threshold=0.75,
-            cross_view_consistency_min_observations=2,
         ),
     )
 
@@ -186,7 +175,6 @@ def synthetic_graph(monkeypatch, tmp_path):
             np.array([1.0, 0.0, 0.0]),  # 1 view
         ],
         mask_cross_view_counts=[2, 2, 1],
-        mask_cross_view_point_counts=[1, 1, 1],
         negative_text_feats=negative_feats,
         _negative_text_feats_normalized=None,
         label_text_feats_normalized=None,
@@ -223,11 +211,9 @@ def test_segment_objects_populates_every_signal(synthetic_graph):
         assert obj.u_view == pytest.approx(1.0 - obj.p_view)
 
     assert [obj.p_det for obj in graph.objects] == pytest.approx([0.25, 0.9, 0.5])
-    # Two agreeing views, two orthogonal views, a single view.
-    assert [obj.p_view for obj in graph.objects] == pytest.approx(
-        [1.0, np.sqrt(2.0) / 2.0, 1.0]
-    )
-    assert [obj.cross_view_sufficient for obj in graph.objects] == [True, True, False]
+    # Two agreeing views (c_bar = 1), two orthogonal views (c_bar = 0), and a
+    # single view, where c_bar is undefined and P^view is 1 by definition.
+    assert [obj.p_view for obj in graph.objects] == pytest.approx([1.0, 0.5, 1.0])
 
 
 def test_synonym_class_is_never_the_semantic_runner_up(synthetic_graph):
@@ -343,7 +329,6 @@ def test_full_signal_round_trip_through_json(synthetic_graph, tmp_path):
         "detection_point_count",
         "cross_view_resultant_sum",
         "cross_view_count",
-        "cross_view_point_count",
     ):
         assert field in saved
 
@@ -361,61 +346,6 @@ def test_full_signal_round_trip_through_json(synthetic_graph, tmp_path):
         restored.cross_view_resultant_sum, source.cross_view_resultant_sum
     )
     assert restored.detection_point_count == source.detection_point_count
-
-
-def test_merged_object_recomputes_correctly_after_a_round_trip(synthetic_graph, tmp_path):
-    graph, _, _ = synthetic_graph
-    Graph.segment_objects(graph)
-    Graph.recompute_semantic_uncertainty(graph)
-
-    left, right = graph.objects[0], graph.objects[1]
-    expected_det = (left.detection_conf_sum + right.detection_conf_sum) / (
-        left.detection_point_count + right.detection_point_count
-    )
-    expected_view_sum = left.cross_view_resultant_sum + right.cross_view_resultant_sum
-    expected_view_count = left.cross_view_count + right.cross_view_count
-
-    for obj in (left, right):
-        obj.save(tmp_path)
-    reloaded = []
-    for obj in (left, right):
-        restored = Object(obj.object_id, obj.room_id)
-        restored.load(str(tmp_path))
-        reloaded.append(restored)
-
-    merged = reloaded[0] + reloaded[1]
-
-    assert merged.p_det == pytest.approx(expected_det)
-    assert merged.u_det == pytest.approx(1.0 - expected_det)
-    np.testing.assert_allclose(merged.cross_view_resultant_sum, expected_view_sum)
-    assert merged.cross_view_count == expected_view_count
-    assert merged.p_view == pytest.approx(
-        float(np.linalg.norm(expected_view_sum / expected_view_count))
-    )
-    # Embedding-derived signals are cleared until recomputed.
-    assert merged.p_sem is None and merged.p_mem is None and merged.p_coh is None
-
-
-def test_graph_recompute_restores_signals_after_a_merge(synthetic_graph):
-    graph, _, _ = synthetic_graph
-    Graph.segment_objects(graph)
-    Graph.recompute_semantic_uncertainty(graph)
-
-    merged = graph.objects[0] + graph.objects[1]
-    merged.label_idx = 0
-    graph.objects = [merged, graph.objects[2]]
-    graph.objects[1].label_idx = 1
-
-    Graph.recompute_cross_view_consistency(graph)
-    Graph.recompute_semantic_uncertainty(graph)
-
-    assert merged.p_sem is not None
-    assert merged.p_mem is not None
-    assert merged.p_view is not None
-    assert merged.p_obj is not None
-    assert merged.u_obj == pytest.approx(1.0 - merged.p_obj)
-    # Both surviving classes are singletons now, so coherence is undefined.
-    assert merged.p_coh is None
 
 
 def test_confidence_and_uncertainty_are_complements_everywhere(synthetic_graph):

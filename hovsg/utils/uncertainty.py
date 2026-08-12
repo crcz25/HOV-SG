@@ -1,7 +1,7 @@
 """Side-effect-free utilities for semantic and containment uncertainty."""
 
 import logging
-from typing import Optional
+from typing import Iterable, Optional
 
 import numpy as np
 from scipy.special import expit, logsumexp
@@ -64,29 +64,55 @@ def compute_object_probability(
     p_det: Optional[float],
     p_view: Optional[float],
     p_mem: Optional[float],
-    p_sem: Optional[float],
-    p_coh: Optional[float],
+    p_sem_bar: Optional[float],
     cross_view_implemented: bool,
 ) -> Optional[float]:
-    """Fuse the object-level probability from the five signal providers.
+    """Fuse the object-level probability from the four signal providers.
 
-    ``p_sem`` and ``p_coh`` estimate the same label-error event from
-    different references, so the more conservative defined value is used.
-    Missing required evidence propagates as ``None``.  The only neutral-value
-    reduction is structural absence of the cross-view provider, where its
-    factor is omitted from the product.
+    ``p_sem_bar`` is the combined label-error estimator of eq. (coherence), so
+    Semantic Uncertainty and Label Coherence enter as a single factor rather
+    than as two independent ones. Missing required evidence propagates as
+    ``None``.  The only neutral-value reduction is structural absence of the
+    cross-view provider, where its factor is omitted from the product.
     """
-    required = (p_det, p_mem, p_sem)
+    required = (p_det, p_mem, p_sem_bar)
     if any(value is None for value in required):
         return None
     if cross_view_implemented and p_view is None:
         return None
 
-    semantic_factor = p_sem if p_coh is None else min(p_sem, p_coh)
-    factors = [p_det, p_mem, semantic_factor]
+    factors = [p_det, p_mem, p_sem_bar]
     if cross_view_implemented:
         factors.append(p_view)
     return float(np.prod(np.asarray(factors, dtype=np.float64)))
+
+
+def compute_class_containment_belief(
+    object_probabilities: Iterable[float],
+) -> Optional[float]:
+    """Propagate object probabilities to one room-level class belief.
+
+    This is eq. (noisyor) of the propagation section, evaluated exactly as
+    written::
+
+        b(r, c) = 1 - prod_{o_i in O(r, c)} (1 - q_i)
+
+    ``object_probabilities`` are the fused object probabilities q_i of
+    eq. (obj-prob) for O(r, c), the objects assigned to room r that the
+    pipeline labeled c.  The result is the probability that at least one of
+    them is a genuine instance of c, under the paper's assumption that the
+    objects are independent, and lies in [0, 1] because every q_i does.
+
+    One object reduces the product to a single factor and returns q_i itself.
+    Each further object can only raise the belief, since every factor
+    (1 - q_i) is at most one.  An empty O(r, c) returns ``None``: with no
+    object labeled c the room carries no evidence about c, which is not the
+    same claim as the belief 0 the empty product would produce.
+    """
+    probabilities = np.asarray(list(object_probabilities), dtype=np.float64)
+    if probabilities.size == 0:
+        return None
+    return float(1.0 - np.prod(1.0 - probabilities))
 
 
 def _sigmoid_margin_confidence(margin, logit_scale):
@@ -265,13 +291,20 @@ def compute_label_coherence_uncertainty(
 ):
     """Compute the leave-one-out, visual-only class-coherence margin.
 
+    Implements m'_i = cos(v_i, mu_l) - max over classes c instantiated in the
+    map with cos(t_c, t_l) < tau of cos(v_i, mu_c), then P_coh = sigma(alpha *
+    m'_i) at the same logit scale and the same tau as eq. (semantic). The
+    prototype mu_l of the object's own class excludes v_i itself, which is what
+    the class sums and counts are passed in for; the signal is undefined when
+    l_i has no other instance.
+
     The class sums and prototypes are supplied by the caller so they can be
-    built once for the complete, post-merge object set.  Text features are
+    built once for the complete object set.  Text features are
     deliberately absent from this function: ``eligibility_mask`` is derived
     from the already-cached text vocabulary and is used only to remove
     near-synonym competitor classes.  Label Coherence and Semantic
-    Uncertainty estimate the same labeling-error event; they must not be
-    multiplied together as independent factors by this signal.
+    Uncertainty estimate the same labeling-error event and are combined by
+    :func:`combine_semantic_confidence`, never multiplied.
     """
     undefined = dict.fromkeys(COHERENCE_FIELDS)
 

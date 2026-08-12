@@ -61,6 +61,7 @@ from hovsg.utils.uncertainty import (
     MEMBERSHIP_FIELDS,
     SEMANTIC_FIELDS,
     build_synonym_eligibility_mask,
+    combine_semantic_confidence,
     compute_cosine_similarities,
     compute_label_coherence_uncertainty,
     compute_object_probability,
@@ -121,10 +122,10 @@ class Graph:
         self.label_synonym_mask = None
         self.label_text_feats_normalized = None
         self._negative_text_feats_normalized = None
-        self.semantic_uncertainty_logit_scale = None
         # Semantic Uncertainty and Label Coherence are converted at the same
         # logit scale alpha and exclude synonyms with the same threshold tau,
         # so a single pair of values serves both margins.
+        self.semantic_uncertainty_logit_scale = None
         self.semantic_uncertainty_synonym_threshold = None
         self.class_embedding_sum = {}
         self.class_count = {}
@@ -136,9 +137,6 @@ class Graph:
         self.negative_text_feats = None
         self.vocab_membership_max_class_similarity = None
         self.vocab_membership_negative_label_count = None
-        self.room_belief_merge_threshold = float(
-            _pipeline_value(self.cfg.pipeline, "room_belief_merge_threshold", 0.5)
-        ) if hasattr(self.cfg, "pipeline") else 0.5
         self.rooms = []
         self.floors = []
         self.full_feats_array = []
@@ -917,8 +915,8 @@ class Graph:
 
         Both signals read the same vocabulary cosine vector, so ``similarity``
         is computed once and shared. Label Coherence is deliberately not
-        computed here: it needs the visual prototypes of the complete,
-        post-merge object set (see :meth:`recompute_label_coherence`).
+        computed here: it needs the visual prototypes of the complete object
+        set (see :meth:`recompute_label_coherence`).
         """
         text_feats = self.label_text_feats_normalized
         logit_scale = self.semantic_uncertainty_logit_scale
@@ -995,9 +993,9 @@ class Graph:
             Graph._assign_object_semantic_signals(self, object)
 
         # Label Coherence is a companion estimator of the same labeling-error
-        # event as Semantic Uncertainty. It is intentionally kept separate;
-        # downstream fusion must not treat the two signals as independent
-        # factors.
+        # event as Semantic Uncertainty; the two are reported separately and
+        # combined by eq. (coherence) in recompute_object_probability, never
+        # multiplied as independent factors.
         # Call through Graph so lightweight test/config stand-ins that invoke
         # this method unbound do not need to provide a bound helper method.
         Graph.recompute_label_coherence(self)
@@ -1090,37 +1088,39 @@ class Graph:
         Graph.recompute_object_probability(self)
 
     def recompute_object_probability(self):
-        """Refresh the fused object probability from all current inputs."""
+        """Refresh eq. (coherence) and the fused object probability."""
         cross_view_implemented = bool(
             getattr(self, "cross_view_consistency_implemented", True)
         )
         for object in self.objects:
+            # eq. (coherence): the two label-error estimators are combined
+            # before the fusion, never multiplied as independent factors.
+            object.p_sem_bar = combine_semantic_confidence(
+                getattr(object, "p_sem", None), getattr(object, "p_coh", None)
+            )
+            object.u_sem_bar = (
+                1.0 - object.p_sem_bar if object.p_sem_bar is not None else None
+            )
             probability = compute_object_probability(
                 getattr(object, "p_det", None),
                 getattr(object, "p_view", None),
                 getattr(object, "p_mem", None),
-                getattr(object, "p_sem", None),
-                getattr(object, "p_coh", None),
+                object.p_sem_bar,
                 cross_view_implemented=cross_view_implemented,
             )
             object.p_obj = probability
             object.u_obj = 1.0 - probability if probability is not None else None
 
-    def propagate_semantic_uncertainty_to_rooms(self):
-        """Propagate fused ``object.p_obj`` probabilities to room nodes."""
-        merge_threshold = float(
-            getattr(
-                self,
-                "room_belief_merge_threshold",
-                _pipeline_value(
-                    getattr(self.cfg, "pipeline", None),
-                    "room_belief_merge_threshold",
-                    0.5,
-                ),
-            )
-        )
+    def propagate_object_probabilities_to_rooms(self):
+        """Evaluate eq. (noisyor) on every room from its own objects.
+
+        Each room reads only the objects assigned to it, so this is a single
+        pass over disjoint object sets: rooms never share a term of the
+        product.  It must run after :meth:`recompute_object_probability`,
+        since it consumes the fused q_i = ``object.p_obj``.
+        """
         for room in self.rooms:
-            room.compute_fused_class_containment_beliefs(merge_threshold)
+            room.compute_class_containment_beliefs()
 
     def create_graph(self):
         """
@@ -1241,21 +1241,9 @@ class Graph:
         self.segment_objects(save_path)
 
         print("number of objects: ", len(self.objects))
-        if self.cfg.pipeline.merge_objects_graph:
-            # merge objects that close to each other with same name
-            for room in tqdm(self.rooms):
-                print("room: ", room.room_id)
-                print(" number of objects before merging: ", len(room.objects))
-                room.merge_objects()
-                print(" number of objects after merging: ", len(room.objects))
-
-            # Room merging replaces each room's object list. Keep the graph-level
-            # view aligned so the final uncertainty pass sees only final objects.
-            self.objects = [object for room in self.rooms for object in room.objects]
-
         self.recompute_cross_view_consistency()
         self.recompute_semantic_uncertainty()
-        self.propagate_semantic_uncertainty_to_rooms()
+        self.propagate_object_probabilities_to_rooms()
 
         print("creating graph...")
         self.create_graph()
