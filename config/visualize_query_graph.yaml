@@ -1,6 +1,18 @@
 main:
   device: cuda
-  graph_path: /home/SOME_USERNAME/HOV-SG/output/hm3dsem/00824-Dd4bFSTQ8gi/graph
+  # `search` evaluates the stock HOV-SG object search with the belief-guided
+  # navigation metrics; `interactive` is the original query-and-visualize loop.
+  mode: search
+  graph_path: /workspace/HOV-SG/data/scene_graphs/hm3dsem/00824-Dd4bFSTQ8gi/graph
+  # The belief-guided run's configuration, read as-is so both searches query
+  # the same vocabulary over the same scenes, floor, ground truth and start
+  # pose. Relative paths are resolved against the HOV-SG repository root.
+  eval_config: uncertsg_eval/config/setup.yaml
+  # Where this run's per-query records and aggregate are written. Relative
+  # paths are resolved against the uncertsg_eval directory, next to the
+  # belief-guided `search.result_file`, which this key deliberately does not
+  # overwrite.
+  result_file: results/object_search_hovsg.json
   long_query:
     spec: [obj, room, floor] # [obj, room, floor], [obj, room], [obj, floor], [obj].
 models:
