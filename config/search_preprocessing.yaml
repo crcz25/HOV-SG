@@ -1,0 +1,29 @@
+main:
+  device: cuda
+  cuda_device: 0
+  dataset: hm3dsem
+  split: val
+  scene_id: 00824-Dd4bFSTQ8gi
+  # HM3DSem walk root. The ground truth this run reads is
+  # <dataset_path>/<split>/<scene_id>/scene_info.json plus its objects/*.ply,
+  # which is what hovsg.eval.hm3dsem_evaluator.HM3DSemanticEvaluator loads.
+  dataset_path: data/hm3dsem_walks
+  # The predicted HOV-SG scene graph directory (floors/, rooms/, objects/).
+  graph_path: data/scene_graphs/hm3dsem/00824-Dd4bFSTQ8gi/graph
+  # Where the three raw CSVs are written. Relative paths resolve against the
+  # HOV-SG repository root, not against Hydra's run directory.
+  output_dir: data/search_preprocessing/00824-Dd4bFSTQ8gi
+eval:
+  # The complete HM3DSem vocabulary: the same label bank, in the same order,
+  # that Graph.segment_objects labeled the predicted objects with, so a
+  # vocabulary class id here is the object nodes' label_idx.
+  obj_labels: HM3DSEM_LABELS
+validation:
+  # Re-runs stock Graph.query_object per class and compares its retrieved
+  # objects and their scores 1-to-1 against this run's table.
+  # "all", "none", or an integer number of evenly spaced classes to compare.
+  stock_comparison_classes: all
+models:
+  clip:
+    type: ViT-H-14 # ViT-L/14@336px # ViT-H-14
+    checkpoint: checkpoints/laion2b_s32b_b79k.bin
