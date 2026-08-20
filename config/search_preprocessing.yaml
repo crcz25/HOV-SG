@@ -10,6 +10,12 @@ main:
   dataset_path: data/hm3dsem_walks
   # The predicted HOV-SG scene graph directory (floors/, rooms/, objects/).
   graph_path: data/scene_graphs/hm3dsem/00824-Dd4bFSTQ8gi/graph
+  # How many objects a query returns.  5 is what HOV-SG's own application
+  # asks for -- application/visualize_query_graph_back.py calls
+  # query_hierarchy(query, top_k=5) -- so it is what the stock search answers
+  # with.  Graph.query_object's signature default is 1; set 1203 (the object
+  # count) to see the whole ranked list instead.
+  top_k: 5
   # Where the three raw CSVs are written. Relative paths resolve against the
   # HOV-SG repository root, not against Hydra's run directory.
   output_dir: data/search_preprocessing/00824-Dd4bFSTQ8gi
@@ -19,9 +25,11 @@ eval:
   # vocabulary class id here is the object nodes' label_idx.
   obj_labels: HM3DSEM_LABELS
 validation:
-  # Re-runs stock Graph.query_object per class and compares its retrieved
-  # objects and their scores 1-to-1 against this run's table.
-  # "all", "none", or an integer number of evenly spaced classes to compare.
+  # Every class always goes through stock Graph.query_object -- its return
+  # value is what the score table is written from.  This selects how many of
+  # those returns are additionally checked against an independent
+  # reproduction of the procedure behind them, scores included.
+  # "all", "none", or an integer number of evenly spaced classes to check.
   stock_comparison_classes: all
 models:
   clip:

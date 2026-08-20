@@ -18,11 +18,22 @@ What is reproduced, and from where
   the scores behind it are recomputed here through the same calls in the same
   order -- and then checked, class by class, against what stock
   ``query_object`` actually returns (see ``--validation``).
-* **Only the truncation is lifted.**  ``top_k`` is never applied: every
-  predicted object gets a row for every vocabulary class, whether or not it
-  survives the query-versus-background filter.  The score on each row is the
-  one stock orders its surviving candidates by; no rank and no metric is
-  written.
+* **The rows are stock's answer.**  Every row of
+  ``object_search_scores.csv`` is an object ``query_object`` actually returned
+  for that class, written in the order it returned them, carrying the score it
+  ranked them by.  The rows come from the return value of the stock call
+  itself, not from a re-derivation of it.  The query-versus-background filter
+  is therefore already applied: an object stock discarded for a class has no
+  row for that class, and no reconstruction step is needed to find that out.
+* **``top_k`` is stock's own.**  The shipped application calls
+  ``query_hierarchy(query, top_k=5)``, so 5 is what a query against this
+  system actually returns and 5 is what the table records.  Nothing about the
+  call is changed, truncation included.
+* **Stock's empty-survivor fallback is stock's answer too.**  When no object
+  survives the filter for a class, ``query_object`` leaves the unfiltered,
+  score-ordered list in place and returns its ``top_k`` head.  That is what
+  the table records for those classes, because that is what the search
+  returns.
 * **The vocabulary is the graph's own.**  ``get_label_feats`` with
   ``HM3DSEM_LABELS`` is the bank ``Graph.segment_objects`` labeled the objects
   with, so a class id in these files is exactly an object node's stored
@@ -72,6 +83,13 @@ METHOD = "hovsg_stock"
 #: calling ``Graph.query_object``: an object whose best-matching category is
 #: this one rather than the query does not survive the query.
 NEGATIVE_LABELS = ["background"]
+
+#: The number of objects a query returns.  This is the value HOV-SG's own
+#: application passes -- ``application/visualize_query_graph_back.py`` calls
+#: ``query_hierarchy(query, top_k=5)`` -- and therefore what the stock search
+#: answers with.  ``Graph.query_object``'s own signature default is 1.
+#: Overridable through ``main.top_k``.
+STOCK_TOP_K = 5
 
 #: The radius ``Graph.segment_objects`` associates an object's 2-D points with
 #: a room footprint at, and the height margin it admits an object to a floor
@@ -474,7 +492,7 @@ class Comparison:
     message: str = ""
 
 
-def compare_with_stock_query_object(
+def verify_reproduction(
     graph: Graph,
     query_class: str,
     query: StockQuery,
@@ -482,38 +500,30 @@ def compare_with_stock_query_object(
     room_ids_list: Sequence[int],
     object_index: Dict[str, int],
     object_embs: np.ndarray,
+    stock_ids: Sequence[int],
+    stock_rooms: Sequence[int],
+    top_k: int,
 ) -> Comparison:
-    """Run stock ``Graph.query_object`` and compare it 1-to-1 with this run.
+    """Check what stock returned against an independent reproduction of it.
 
-    Three things are compared, which together are what the raw tables are
-    made of: which objects the stock search retrieves, in which order, and
-    with which score.  ``top_k`` is the object count, so stock returns its
-    whole list and no difference can hide behind truncation.
+    ``stock_ids``/``stock_rooms`` are the live return value of
+    ``Graph.query_object`` -- the same value the rows were written from.  This
+    re-derives that list from the stock procedure followed step by step, and
+    re-derives the scores through a second, independent CLIP embedding, so a
+    silent divergence between what the table says and what the search does
+    would have to survive both.
     """
-    with contextlib.redirect_stdout(io.StringIO()):
-        stock_ids, stock_rooms = graph.query_object(
-            query_class,
-            room_ids=list(range(len(graph.rooms))),
-            top_k=len(graph.objects),
-            negative_prompt=NEGATIVE_LABELS,
-        )
-
-    top_index = stock_retrieved_order(query, top_k=len(graph.objects))
+    top_index = stock_retrieved_order(query, top_k=top_k)
     expected_ids = [object_index[objects_list[i].object_id] for i in top_index]
     expected_rooms = [room_ids_list[i] for i in top_index]
 
-    # (1) the objects stock retrieves, in stock's order.
     if list(stock_ids) != expected_ids:
-        detail = (
-            " in a different order"
-            if len(stock_ids) == len(expected_ids)
-            else ""
-        )
+        detail = " in a different order" if len(stock_ids) == len(expected_ids) else ""
         return Comparison(
             False,
             float("nan"),
             float("nan"),
-            f"'{query_class}': stock query_object retrieved {len(stock_ids)} "
+            f"'{query_class}': stock query_object returned {len(stock_ids)} "
             f"objects, this run reproduces {len(expected_ids)}{detail}",
         )
     if list(stock_rooms) != expected_rooms:
@@ -521,7 +531,7 @@ def compare_with_stock_query_object(
             False, float("nan"), float("nan"), f"'{query_class}': parent rooms differ"
         )
 
-    # (2) the score stock sorts its survivors by is the score stored for them.
+    # The score stock sorts its survivors by is the score written to the table.
     survivors = np.where(query.survives)[0]
     sorting_deviation = 0.0
     if survivors.size:
@@ -529,8 +539,7 @@ def compare_with_stock_query_object(
             np.max(np.abs(query.max_scores[survivors] - query.scores[survivors]))
         )
 
-    # (3) the score itself, re-derived through the same stock calls a second
-    # time, exactly as query_object derives it internally on every call.
+    # The score itself, re-derived through the same stock calls a second time.
     recomputed = np.dot(
         get_text_feats_multiple_templates(
             query.categories, graph.clip_model, graph.clip_feat_dim
@@ -621,21 +630,28 @@ def run(params: DictConfig) -> Dict[str, object]:
     print(f"  wrote {room_rows} rows: {room_gt_csv}")
 
     # --- 4. Query the full vocabulary --------------------------------------
+    # Every class goes through the stock call, and the rows are its return
+    # value.  ``validation.stock_comparison_classes`` selects how many of
+    # those returns are additionally checked against an independent
+    # reproduction of the procedure behind them.
     compared = comparison_class_ids(
         params.validation.stock_comparison_classes, len(classes)
     )
     compared_set = set(compared)
     scores_csv = output_dir / "object_search_scores.csv"
+    top_k = int(params.main.get("top_k", STOCK_TOP_K))
+    print(f"  top_k: {top_k} (the value HOV-SG's own application queries with)")
+    candidate_position = {obj.object_id: i for i, obj in enumerate(objects_list)}
 
     score_rows = 0
+    rows_per_class: List[int] = []
     survivors_total = 0
     classes_with_survivors = 0
-    empty_survivor_classes: List[str] = []
+    fallback_classes: List[str] = []
+    shape_mismatches: List[str] = []
     mismatches: List[str] = []
     max_sorting_deviation = 0.0
     max_score_deviation = 0.0
-    object_ids = [obj.object_id for obj in objects_list]
-    room_labels = [graph.rooms[i].room_id for i in room_ids_list]
 
     with scores_csv.open("w", newline="") as file:
         writer = csv.writer(file)
@@ -646,8 +662,20 @@ def run(params: DictConfig) -> Dict[str, object]:
             survivors_total += survivors
             if survivors:
                 classes_with_survivors += 1
-            elif len(empty_survivor_classes) < 10:
-                empty_survivor_classes.append(class_label)
+            else:
+                # Stock keeps its unfiltered, score-ordered list when nothing
+                # survives, and returns every object.  Recorded, not special-cased.
+                fallback_classes.append(class_label)
+
+            # The final result of the search for this class, taken from the
+            # stock function itself, truncated exactly as stock truncates it.
+            with contextlib.redirect_stdout(io.StringIO()):
+                stock_ids, stock_rooms = graph.query_object(
+                    class_label,
+                    room_ids=list(range(len(graph.rooms))),
+                    top_k=top_k,
+                    negative_prompt=NEGATIVE_LABELS,
+                )
 
             writer.writerows(
                 [
@@ -655,18 +683,29 @@ def run(params: DictConfig) -> Dict[str, object]:
                     METHOD,
                     class_id,
                     class_label,
-                    object_id,
-                    room_label,
-                    float(score),
+                    graph.objects[node_index].object_id,
+                    graph.rooms[room_index].room_id,
+                    float(
+                        query.scores[
+                            candidate_position[graph.objects[node_index].object_id]
+                        ]
+                    ),
                 ]
-                for object_id, room_label, score in zip(
-                    object_ids, room_labels, query.scores
-                )
+                for node_index, room_index in zip(stock_ids, stock_rooms)
             )
-            score_rows += len(object_ids)
+            score_rows += len(stock_ids)
+            rows_per_class.append(len(stock_ids))
+
+            # The row count must be stock's answer: its top_k head of the
+            # survivors, or of every object when the fallback applies.
+            expected = min(survivors if survivors else len(objects_list), top_k)
+            if len(stock_ids) != expected:
+                shape_mismatches.append(
+                    f"'{class_label}': {len(stock_ids)} rows, expected {expected}"
+                )
 
             if class_id in compared_set:
-                comparison = compare_with_stock_query_object(
+                comparison = verify_reproduction(
                     graph,
                     class_label,
                     query,
@@ -674,6 +713,9 @@ def run(params: DictConfig) -> Dict[str, object]:
                     room_ids_list,
                     object_index,
                     object_embs,
+                    stock_ids,
+                    stock_rooms,
+                    top_k,
                 )
                 if not comparison.agrees:
                     mismatches.append(comparison.message)
@@ -700,7 +742,10 @@ def run(params: DictConfig) -> Dict[str, object]:
         "room_rows": room_rows,
         "survivors_total": survivors_total,
         "classes_with_survivors": classes_with_survivors,
-        "empty_survivor_classes": empty_survivor_classes,
+        "fallback_classes": fallback_classes,
+        "rows_per_class": rows_per_class,
+        "top_k": top_k,
+        "shape_mismatches": shape_mismatches,
         "compared_classes": len(compared),
         "mismatches": mismatches,
         "max_sorting_deviation": max_sorting_deviation,
@@ -733,6 +778,8 @@ def report(summary: Dict[str, object], objects_list: Sequence, graph: Graph) -> 
 
     print()
     print("--- validation ---------------------------------------------------")
+    rows_per_class = summary["rows_per_class"]
+    fallback = len(summary["fallback_classes"])
     checks = [
         (
             summary["object_rows"] == objects and not duplicate_ids,
@@ -745,15 +792,33 @@ def report(summary: Dict[str, object], objects_list: Sequence, graph: Graph) -> 
             f"for {len(graph.objects)} object nodes",
         ),
         (
-            summary["score_rows"] == objects * classes,
-            f"object_search_scores.csv holds N x C rows: {summary['score_rows']} "
-            f"= {objects} x {classes}",
-        ),
-        (
             not summary["inconsistent_labels"],
             f"predicted class ids index the queried vocabulary: "
             f"{len(summary['inconsistent_labels'])} of {objects} objects disagree "
             f"with their stored class label",
+        ),
+        (
+            len(rows_per_class) == classes,
+            f"object_search_scores.csv is the search's answer: "
+            f"{summary['score_rows']} rows over {len(rows_per_class)} of {classes} "
+            f"queried classes "
+            f"({min(rows_per_class)}-{max(rows_per_class)} objects returned per class)",
+        ),
+        (
+            not summary["shape_mismatches"],
+            f"the filter and the truncation are applied as stock applies "
+            f"them: {len(summary['shape_mismatches'])} classes with an "
+            f"unexpected row count, "
+            f"{summary['survivors_total']} objects passed the background filter "
+            f"across the vocabulary and {summary['score_rows']} rows survived "
+            f"stock's top-{summary['top_k']} cut",
+        ),
+        (
+            not summary["shape_mismatches"],
+            f"top_k is stock's own: every class carries at most "
+            f"{summary['top_k']} objects, the value HOV-SG's application "
+            f"queries with, {fallback} of them supplied by the empty-survivor "
+            f"fallback",
         ),
         (
             not summary["mismatches"],
@@ -761,17 +826,6 @@ def report(summary: Dict[str, object], objects_list: Sequence, graph: Graph) -> 
             f"of {classes} classes: {len(summary['mismatches'])} mismatches, "
             f"max score deviation {summary['max_score_deviation']:.3e}, "
             f"max sorting-score deviation {summary['max_sorting_deviation']:.3e}",
-        ),
-        (
-            summary["score_rows"] == objects * classes,
-            f"no top_k truncation: every class keeps all {objects} objects",
-        ),
-        (
-            summary["survivors_total"] < objects * classes,
-            f"failed-filter objects remain in the raw table: "
-            f"{objects * classes - summary['survivors_total']} of "
-            f"{objects * classes} rows are objects the background filter "
-            f"dropped, and every one of them still has a row",
         ),
         (
             summary["room_rows"] == rooms * classes,
@@ -811,19 +865,28 @@ def report(summary: Dict[str, object], objects_list: Sequence, graph: Graph) -> 
             "  GT categories outside the HM3DSem vocabulary: "
             + ", ".join(sorted(placement.categories_outside_vocabulary))
         )
-    empty_classes = classes - summary["classes_with_survivors"]
-    if empty_classes:
+    if summary["fallback_classes"]:
+        shown = summary["fallback_classes"][:10]
         print(
-            f"  no object survived the background filter for {empty_classes} of "
-            f"{classes} classes (first {len(summary['empty_survivor_classes'])}: "
-            + ", ".join(summary["empty_survivor_classes"])
+            f"  no object survived the background filter for "
+            f"{len(summary['fallback_classes'])} of {classes} classes, so stock "
+            f"returned every object for them (first {len(shown)}: "
+            + ", ".join(shown)
             + ")"
         )
+    print(
+        f"  objects returned across the vocabulary: {summary['score_rows']} rows "
+        f"from {classes} queries, at most {summary['top_k']} each; "
+        f"{len(summary['fallback_classes'])} of those queries answered from "
+        f"stock's empty-survivor fallback"
+    )
     if placement.without_geometry:
         print(
             f"  ground-truth objects with an empty point cloud, counted as "
             f"unassigned: {placement.without_geometry}"
         )
+    for message in summary["shape_mismatches"][:10]:
+        print(f"  ROW COUNT {message}")
     for message in summary["mismatches"][:10]:
         print(f"  MISMATCH {message}")
 

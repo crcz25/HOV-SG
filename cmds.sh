@@ -16,3 +16,23 @@ mkdir -p outputs/hm3dsem_preparation
 
 nohup ./scripts/process_hm3dsem_excluding_readme_eval.sh --all --include-excluded --force \
   > outputs/hm3dsem_preparation/rerun.log 2>&1 &
+
+
+# csv generation
+python application/search_preprocessing.py
+
+## another scene
+python application/search_preprocessing.py \
+  main.scene_id=00800-TEEsavR23oF \
+  main.graph_path=data/scene_graphs/hm3dsem/00800-TEEsavR23oF/graph \
+  main.output_dir=data/search_preprocessing/00800-TEEsavR23oF
+
+## skip the stock 1-to-1 re-check (roughly halves the runtime)
+python application/search_preprocessing.py validation.stock_comparison_classes=none
+
+## spot-check instead: 50 evenly spaced classes
+python application/search_preprocessing.py validation.stock_comparison_classes=50
+
+## pick a GPU, or force CPU
+python application/search_preprocessing.py main.cuda_device=1
+python application/search_preprocessing.py main.device=cpu
