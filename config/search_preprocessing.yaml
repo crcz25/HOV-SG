@@ -24,6 +24,11 @@ eval:
   # that Graph.segment_objects labeled the predicted objects with, so a
   # vocabulary class id here is the object nodes' label_idx.
   obj_labels: HM3DSEM_LABELS
+  # Which ground-truth collection of scene_info.json to evaluate against.
+  # "all_objects" is every annotated object of the HM3D-Sem scene, including
+  # the ones the trajectory never observed; "objects" is only the
+  # trajectory-visible subset that HM3DSemanticEvaluator reads.
+  gt_object_collection: all_objects
 validation:
   # Every class always goes through stock Graph.query_object -- its return
   # value is what the score table is written from.  This selects how many of

@@ -38,10 +38,23 @@ What is reproduced, and from where
   ``HM3DSEM_LABELS`` is the bank ``Graph.segment_objects`` labeled the objects
   with, so a class id in these files is exactly an object node's stored
   ``label_idx``.
-* **Ground truth is the HM3DSem evaluator's.**
-  ``HM3DSemanticEvaluator.load_gt_graph_from_json`` loads the walk's
-  ``scene_info.json`` and per-object point clouds, which live in the same
-  world frame as the predicted graph.
+* **Ground truth is every annotated object of the scene.**  The walk's
+  ``scene_info.json`` carries two collections: ``objects``, the
+  trajectory-visible ones the evaluator reads, and ``all_objects``, every
+  annotated object of the complete HM3D-Sem scene including the ones the walk
+  never saw.  This run reads ``all_objects`` (``eval.gt_object_collection``),
+  positioned by each entry's serialized ``centroid``, and cross-checks it
+  against ``HM3DSemanticEvaluator.load_gt_graph_from_json``: every object that
+  loader covers must be present with the same position, to zero deviation.
+  ``gt_objects.csv`` flags which were observed, since an object the walk never
+  saw cannot be in the predicted graph at all.
+* **y(r, c) is over predicted rooms, and its evidence is on disk.**  The
+  room table answers, for each predicted room and class, whether the room
+  contains a ground-truth object of that class.  ``gt_objects.csv`` records
+  every ground-truth object individually -- its HM3DSem region, the predicted
+  room its centroid fell in, and whether it fell in one at all -- so the
+  objects behind any ``gt_class_present_in_room = 1`` are recoverable, and the ones
+  that landed nowhere are visible rather than merely counted.
 * **Room containment is ``Graph.segment_objects``'.**  A ground-truth object
   is placed in the predicted room whose 2-D footprint covers its centroid,
   scored by ``find_intersection_share`` at the same radius, inside the same
@@ -58,6 +71,7 @@ from __future__ import annotations
 import contextlib
 import csv
 import io
+import json
 import os
 from collections import Counter, defaultdict
 from dataclasses import dataclass
@@ -106,7 +120,7 @@ OBJECT_FIELDS = [
     "object_id",
     "predicted_class_id",
     "class_label",
-    "predicted_room",
+    "predicted_room_id",
     "object_x",
     "object_y",
     "object_z",
@@ -118,20 +132,35 @@ SCORE_FIELDS = [
     "class_id",
     "class_label",
     "object_id",
-    "predicted_room",
+    "predicted_room_id",
     "score",
+]
+
+GT_OBJECT_FIELDS = [
+    "scene_id",
+    "method",
+    "gt_object_id",
+    "gt_category",
+    "class_id",
+    "gt_room_id",
+    "predicted_room_id",
+    "gt_x",
+    "gt_y",
+    "gt_z",
+    "observed_in_walk",
+    "assigned",
 ]
 
 ROOM_GT_FIELDS = [
     "scene_id",
     "method",
-    "room_id",
+    "predicted_room_id",
     "class_id",
     "class_label",
     "room_x",
     "room_y",
     "room_z",
-    "gt_contains_class",
+    "gt_class_present_in_room",
     "gt_class_present_in_scene",
     "num_gt_instances_in_room",
 ]
@@ -279,8 +308,13 @@ def stock_retrieved_order(query: StockQuery, top_k: int) -> np.ndarray:
 class RoomPlacement:
     """Where the ground-truth objects landed among the predicted rooms."""
 
-    #: (room_id, class_id) -> number of GT instances of that class in the room
+    #: (predicted_room_id, class_id) -> how many GT objects of that class
+    #: have their centroid inside that predicted room.  This is the count
+    #: behind y(r, c).
     instances: Dict[Tuple[str, int], int]
+    #: One record per GT object, in ground-truth order: where it is annotated,
+    #: where it landed, and whether it landed anywhere at all.
+    records: List[Dict[str, object]]
     #: class ids present anywhere in the ground truth of this scene
     classes_in_scene: set
     assigned: int
@@ -291,6 +325,82 @@ class RoomPlacement:
     categories_outside_vocabulary: Counter
     #: GT objects whose loaded point cloud is empty, so they have no centroid
     without_geometry: int
+
+
+def load_gt_objects(scene_info: Path, collection: str) -> List[Dict[str, object]]:
+    """Read one of ``scene_info.json``'s two ground-truth object collections.
+
+    ``objects`` is the trajectory-visible set, each entry backed by an
+    ``objects/<id>.ply``.  ``all_objects`` is the superset holding every
+    annotated object of the complete HM3D-Sem scene, observed or not; its
+    unobserved entries have no point cloud and carry the source Habitat boxes
+    instead.  ``HM3DSemanticEvaluator`` reads only the former and requires the
+    point clouds, so the latter is read here directly.
+
+    Each entry's ``centroid`` is used as its world position.  That field is
+    written by ``create_hm3dsem_walks_gt.object_centroid``: the mean of the
+    mapped points for an observed object, falling back to the OBB and then the
+    AABB centre for one the walk never saw.  For observed objects it is
+    therefore the same statistic the evaluator's point clouds give, which
+    ``verify_gt_against_evaluator`` checks rather than assumes.
+    """
+    with scene_info.open() as file:
+        payload = json.load(file)
+    if collection not in payload:
+        raise KeyError(
+            f"{scene_info} has no '{collection}' collection; it holds "
+            f"{sorted(k for k in payload if isinstance(payload[k], list))}"
+        )
+    return [
+        {
+            "id": entry["id"],
+            "category": str(entry["category"]),
+            "region_id": entry["region_id"],
+            "centroid": entry.get("centroid"),
+            "observed_in_walk": bool(entry.get("observed_in_walk", True)),
+        }
+        for entry in payload[collection]
+    ]
+
+
+def verify_gt_against_evaluator(
+    gt_objects: Sequence[Dict[str, object]], evaluator_objects: Sequence
+) -> Tuple[int, float]:
+    """Check the JSON-read ground truth against the repository's own loader.
+
+    Every object ``HM3DSemanticEvaluator`` loaded must appear here with the
+    same world position, where the evaluator's position is the mean of the
+    point cloud it read from disk.  This is what makes reading the JSON
+    directly equivalent to the loader for the objects the loader covers, and
+    it is measured, not asserted in a comment.
+
+    Returns:
+        How many evaluator objects were matched, and the largest coordinate
+        deviation found.
+    """
+    by_id = {str(entry["id"]): entry for entry in gt_objects}
+    matched = 0
+    deviation = 0.0
+    for objectt in evaluator_objects:
+        entry = by_id.get(str(objectt.id))
+        if entry is None or entry["centroid"] is None:
+            continue
+        points = np.asarray(objectt.points, dtype=float)
+        if not points.size:
+            continue
+        matched += 1
+        deviation = max(
+            deviation,
+            float(
+                np.max(
+                    np.abs(
+                        np.mean(points, axis=0)
+                        - np.asarray(entry["centroid"], dtype=float)
+                    )
+                )
+            ),
+        )
+    return matched, deviation
 
 
 def room_containment_shares(rooms: Sequence, point: np.ndarray) -> np.ndarray:
@@ -321,14 +431,16 @@ def assign_gt_objects_to_rooms(
 ) -> RoomPlacement:
     """Place every ground-truth object in the predicted room containing it.
 
-    The object's centroid is the mean of the ground-truth points the walk
-    observed, which is what ``create_hm3dsem_walks_gt.object_centroid``
-    records for an observed object and the same statistic
-    ``Room.update_centroid`` uses.  An object no room contains is counted, not
+    The object's position is its serialized ``centroid``, written by
+    ``create_hm3dsem_walks_gt.object_centroid``: the mean of the mapped points
+    for an object the walk observed -- the same statistic
+    ``Room.update_centroid`` uses -- and the Habitat OBB or AABB centre for
+    one it never saw.  An object no room contains is counted, not
     reassigned: no predicted object and no ground-truth instance are matched
     to each other anywhere in this function.
     """
     instances: Dict[Tuple[str, int], int] = defaultdict(int)
+    records: List[Dict[str, object]] = []
     classes_in_scene = set()
     assigned = 0
     unassigned = 0
@@ -337,7 +449,7 @@ def assign_gt_objects_to_rooms(
     without_geometry = 0
 
     for gt_object in gt_objects:
-        category = str(gt_object.category)
+        category = str(gt_object["category"])
         class_id = class_ids.get(category)
         if class_id is None:
             # A ground-truth category the HM3DSem vocabulary does not contain
@@ -346,16 +458,34 @@ def assign_gt_objects_to_rooms(
         else:
             classes_in_scene.add(class_id)
 
-        points = np.asarray(gt_object.points, dtype=float)
-        if not points.size:
-            # No observed geometry means no centroid to place, so the object
-            # is reported rather than placed by some other quantity.
+        record = {
+            "gt_object_id": gt_object["id"],
+            "gt_category": category,
+            "class_id": "" if class_id is None else class_id,
+            "gt_room_id": gt_object["region_id"],
+            "predicted_room_id": "",
+            "gt_x": "",
+            "gt_y": "",
+            "gt_z": "",
+            "observed_in_walk": int(bool(gt_object["observed_in_walk"])),
+            "assigned": 0,
+        }
+        records.append(record)
+
+        if gt_object["centroid"] is None:
+            # No geometry at all: neither mapped points nor a usable Habitat
+            # box, so there is no position to place.  Reported, not guessed.
             without_geometry += 1
             unassigned += 1
             unassigned_categories[category] += 1
             continue
 
-        centroid = np.mean(points, axis=0)
+        centroid = np.asarray(gt_object["centroid"], dtype=float)
+        record["gt_x"], record["gt_y"], record["gt_z"] = (
+            float(centroid[0]),
+            float(centroid[1]),
+            float(centroid[2]),
+        )
         shares = room_containment_shares(rooms, centroid)
         if not shares.size or np.max(shares) == 0:
             unassigned += 1
@@ -364,11 +494,14 @@ def assign_gt_objects_to_rooms(
 
         assigned += 1
         room = rooms[int(np.argmax(shares))]
+        record["predicted_room_id"] = room.room_id
+        record["assigned"] = 1
         if class_id is not None:
             instances[(room.room_id, class_id)] += 1
 
     return RoomPlacement(
         instances=dict(instances),
+        records=records,
         classes_in_scene=classes_in_scene,
         assigned=assigned,
         unassigned=unassigned,
@@ -412,6 +545,31 @@ def write_objects_csv(path: Path, scene_id: str, objects_list: Sequence) -> int:
     return len(objects_list)
 
 
+def write_gt_objects_csv(
+    path: Path, scene_id: str, placement: RoomPlacement
+) -> int:
+    """Write every HM3DSem ground-truth object and where it landed.
+
+    One row per ground-truth object, in ground-truth order, carrying both of
+    its room identities: ``gt_room_id`` is the HM3DSem region it is annotated
+    in, ``predicted_room_id`` is the predicted room its centroid falls in.
+    The objects no predicted room contains are here too, with an empty
+    ``predicted_room_id`` and ``assigned = 0``, so the ones that produced no
+    y(r, c) are on disk rather than only in a printed count.
+
+    Grouping the assigned rows by ``(predicted_room_id, class_id)`` gives
+    exactly the objects behind each ``gt_class_present_in_room = 1``.
+    """
+    with path.open("w", newline="") as file:
+        writer = csv.writer(file)
+        writer.writerow(GT_OBJECT_FIELDS)
+        writer.writerows(
+            [scene_id, METHOD] + [record[field] for field in GT_OBJECT_FIELDS[2:]]
+            for record in placement.records
+        )
+    return len(placement.records)
+
+
 def write_room_ground_truth_csv(
     path: Path,
     scene_id: str,
@@ -419,7 +577,16 @@ def write_room_ground_truth_csv(
     classes: Sequence[str],
     placement: RoomPlacement,
 ) -> int:
-    """Write the full predicted-room x HM3DSem-vocabulary table."""
+    """Write the full predicted-room x HM3DSem-vocabulary table.
+
+    ``gt_class_present_in_room`` is y(r, c): whether predicted room ``r``
+    holds at least one ground-truth object of class ``c``, where "holds" means
+    the object's centroid lies in the room.  Its neighbour
+    ``gt_class_present_in_scene`` asks the same of the whole scene, so the two
+    differ only in scope.  Which objects those are is recorded
+    per object in ``gt_objects.csv``; this table carries the label and the
+    count.
+    """
     rows = 0
     with path.open("w", newline="") as file:
         writer = csv.writer(file)
@@ -582,8 +749,24 @@ def run(params: DictConfig) -> Dict[str, object]:
     graph = Graph(params)
     graph.load_graph(str(graph_path))
 
+    # The ground truth this run evaluates against.  ``all_objects`` is every
+    # annotated object of the scene; ``objects`` is only what the walk saw.
+    collection = str(params.eval.get("gt_object_collection", "all_objects"))
+    gt_objects = load_gt_objects(scene_info, collection)
+    observed = sum(1 for entry in gt_objects if entry["observed_in_walk"])
+    print(
+        f"  HM3DSem ground truth: {len(gt_objects)} objects from "
+        f"'{collection}', {observed} observed in the walk"
+    )
+
+    # The repository's own loader, kept as the cross-check that reading the
+    # JSON directly is equivalent for the objects it covers.  It reads
+    # 'objects' only, and needs a point cloud per object.
     evaluator = HM3DSemanticEvaluator(params)
     evaluator.load_gt_graph_from_json(str(scene_info))
+    matched_gt, gt_centroid_deviation = verify_gt_against_evaluator(
+        gt_objects, evaluator.gt_objects
+    )
 
     with _in_repo_root():
         _, classes = get_label_feats(
@@ -597,9 +780,9 @@ def run(params: DictConfig) -> Dict[str, object]:
     print(f"  HM3DSem vocabulary: {len(classes)} classes ({params.eval.obj_labels})")
 
     # --- 2. Ground-truth objects in predicted rooms ------------------------
-    placement = assign_gt_objects_to_rooms(evaluator.gt_objects, graph.rooms, class_ids)
+    placement = assign_gt_objects_to_rooms(gt_objects, graph.rooms, class_ids)
     print(
-        f"  ground truth: {placement.assigned} of {len(evaluator.gt_objects)} objects "
+        f"  ground truth: {placement.assigned} of {len(gt_objects)} objects "
         f"lie in a predicted room, {placement.unassigned} in none"
     )
 
@@ -622,6 +805,10 @@ def run(params: DictConfig) -> Dict[str, object]:
     objects_csv = output_dir / "object_search_objects.csv"
     object_rows = write_objects_csv(objects_csv, scene_id, objects_list)
     print(f"  wrote {object_rows} rows: {objects_csv}")
+
+    gt_objects_csv = output_dir / "gt_objects.csv"
+    gt_object_rows = write_gt_objects_csv(gt_objects_csv, scene_id, placement)
+    print(f"  wrote {gt_object_rows} rows: {gt_objects_csv}")
 
     room_gt_csv = output_dir / "room_search_ground_truth.csv"
     room_rows = write_room_ground_truth_csv(
@@ -751,11 +938,20 @@ def run(params: DictConfig) -> Dict[str, object]:
         "max_sorting_deviation": max_sorting_deviation,
         "max_score_deviation": max_score_deviation,
         "inconsistent_labels": inconsistent_labels,
-        "gt_objects": len(evaluator.gt_objects),
+        "gt_objects": len(gt_objects),
+        "gt_collection": collection,
+        "gt_observed": observed,
+        "evaluator_objects": len(evaluator.gt_objects),
+        "matched_gt": matched_gt,
+        "gt_centroid_deviation": gt_centroid_deviation,
+        "gt_object_rows": gt_object_rows,
+        "positive_cells": sum(1 for count in placement.instances.values() if count),
+        "placed_instances": sum(placement.instances.values()),
         "placement": placement,
         "files": {
             "objects": objects_csv,
             "scores": scores_csv,
+            "gt_objects": gt_objects_csv,
             "rooms": room_gt_csv,
         },
     }
@@ -830,7 +1026,32 @@ def report(summary: Dict[str, object], objects_list: Sequence, graph: Graph) -> 
         (
             summary["room_rows"] == rooms * classes,
             f"room ground truth is the full Cartesian product: "
-            f"{summary['room_rows']} = {rooms} x {classes}",
+            f"{summary['room_rows']} = {rooms} predicted rooms x {classes} "
+            f"classes, {summary['positive_cells']} of them y(r,c)=1",
+        ),
+        (
+            summary["matched_gt"] == summary["evaluator_objects"]
+            and summary["gt_centroid_deviation"] == 0.0,
+            f"the ground truth agrees with the repository's own loader: all "
+            f"{summary['evaluator_objects']} objects HM3DSemanticEvaluator "
+            f"loads are in '{summary['gt_collection']}' "
+            f"({summary['matched_gt']} matched), max centroid deviation "
+            f"{summary['gt_centroid_deviation']:.3e}",
+        ),
+        (
+            summary["gt_object_rows"] == summary["gt_objects"],
+            f"every ground-truth object is in gt_objects.csv: "
+            f"{summary['gt_object_rows']} rows for {summary['gt_objects']} GT "
+            f"objects of '{summary['gt_collection']}' "
+            f"({summary['gt_observed']} observed in the walk, "
+            f"{summary['gt_objects'] - summary['gt_observed']} never seen), "
+            f"{placement.unassigned} of them in no predicted room",
+        ),
+        (
+            summary["placed_instances"] == placement.assigned,
+            f"the room counts and the inventory agree: "
+            f"num_gt_instances_in_room sums to {summary['placed_instances']}, "
+            f"and {placement.assigned} objects are marked assigned",
         ),
         (
             True,
