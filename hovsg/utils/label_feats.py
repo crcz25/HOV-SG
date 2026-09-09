@@ -53,7 +53,7 @@ def get_label_feats(clip_model, clip_feat_dim, obj_labels, label_feat_path=None)
     elif obj_labels == "HM3DSEM_LABELS":
         # TODO: change this
         label_feat_path = "hovsg/labels"
-        classes_matrix = pd.read_csv(os.path.join(label_feat_path, "HM3D_CountsOfObjectTypes.csv"), header=0, sep=";")
+        classes_matrix = pd.read_csv(os.path.join(label_feat_path, "HM3D_CountsOfObjectTypes_normalized.csv"), header=0, sep=";")
         classes = list(classes_matrix[classes_matrix.keys()[0]].values)
         text_feats, classes = compute_label_feats(clip_model, clip_feat_dim, label_feat_path, classes, "text_feats_HM3DSEM_LABELS.npy")
     return text_feats, classes
