@@ -1,0 +1,494 @@
+original_class_label,canonical_label,recommendation,justification,
+air conditioner,air conditioner,apply,Phrase/nominalization variant for the same appliance.,
+air conditioning,air conditioner,apply,Phrase/nominalization variant for the same appliance.,
+air freshener,air freshener,apply,Same general appliance, wording/power-source modifier is non-essential.
+air refresher,air freshener,apply,Same general appliance, wording/power-source modifier is non-essential.
+alarm control,alarm controller,apply,Equivalent wording for the same control device.,
+alarm controller,alarm controller,apply,Equivalent wording for the same control device.,
+album,album,apply,Plurality/quantity does not change the object class.,
+albums,album,apply,Plurality/quantity does not change the object class.,
+american flag,flag,apply,Country modifier is non-essential to the general flag class.,
+antique clock,clock,apply,Style/mounting-location modifiers are non-essential, functional clock subtypes are kept separate.
+armchair,armchair,apply,"Size, quantity, or placement/context modifier; all are armchairs.",
+art frame,frame,apply,Content/style modifiers, all denote a general frame object. Specialized mirror/screen/shower frames remain distinct.
+artwork frame,frame,apply,Content/style modifiers, all denote a general frame object. Specialized mirror/screen/shower frames remain distinct.
+audio cable,audio cable,apply,Singular/plural normalization.,
+audio cables,audio cable,apply,Singular/plural normalization.,
+bag,bag,apply,"Plurality, size, material, or quantity is non-essential to the general bag class.",
+bags,bag,apply,"Plurality, size, material, or quantity is non-essential to the general bag class.",
+bar soap,soap,apply,Form/use modifiers are non-essential to the general soap class.,
+basin faucet,faucet,apply,Tap/faucet synonyms with location modifiers, same general water-control fixture.
+basket,basket,apply,Singular/plural normalization.,
+baskets,basket,apply,Singular/plural normalization.,
+bath cabinet,bathroom cabinet,apply,Equivalent room/location wording for the same cabinet subtype.,
+bath carpet,carpet,apply,"Location, material, and rolled-state modifiers are non-essential to the general carpet class.",
+bath cosmetics,cosmetics,apply,"Singular/plural, quantity, and location modifiers; same general cosmetics class.",
+bath faucet,faucet,apply,Tap/faucet synonyms with location modifiers, same general water-control fixture.
+bath mat,bath mat,apply,Spacing/location wording variants for the same bath mat class.,
+bath shelf,shelf,apply,Height/location modifiers are non-essential to the general shelf class, function/content-specific shelves remain separate.
+bath sink,sink,apply,Room/shape wording and common synonym, same general sink/washbasin fixture.
+bath tap,faucet,apply,Tap/faucet synonyms with location modifiers, same general water-control fixture.
+bath towel,towel,apply,"Plurality, quantity, and location/use modifiers are non-essential to the general towel class; paper towels remain separate.",
+bath towels,towel,apply,"Plurality, quantity, and location/use modifiers are non-essential to the general towel class; paper towels remain separate.",
+bath tub,bathtub,apply,Spacing and location/style modifier, same general bathtub object.
+bath utensil,bathroom utensil,apply,Room/location wording variants for the same generic bathroom-utensil label.,
+bathmat,bath mat,apply,Spacing/location wording variants for the same bath mat class.,
+bathroom cabinet,bathroom cabinet,apply,Equivalent room/location wording for the same cabinet subtype.,
+bathroom cabinet door,cabinet door,apply,Parent-room/location modifier does not change the cabinet-door class.,
+bathroom cabinet drawer,cabinet drawer,apply,Parent-room/location modifier does not change the cabinet-drawer class.,
+bathroom mat,bath mat,apply,Spacing/location wording variants for the same bath mat class.,
+bathroom shelf,shelf,apply,Height/location modifiers are non-essential to the general shelf class, function/content-specific shelves remain separate.
+bathroom towel,towel,apply,"Plurality, quantity, and location/use modifiers are non-essential to the general towel class; paper towels remain separate.",
+bathroom utensil,bathroom utensil,apply,Room/location wording variants for the same generic bathroom-utensil label.,
+bathroom utensils,bathroom utensil,apply,Room/location wording variants for the same generic bathroom-utensil label.,
+bathtub,bathtub,apply,Spacing and location/style modifier, same general bathtub object.
+bathtub tap,faucet,apply,Tap/faucet synonyms with location modifiers, same general water-control fixture.
+bathtub utensil,bathroom utensil,apply,Room/location wording variants for the same generic bathroom-utensil label.,
+bean bag chair,beanbag chair,apply,Spacing/name variants for the same seating object.,
+beanbag,beanbag chair,apply,Spacing/name variants for the same seating object.,
+beanbag chair,beanbag chair,apply,Spacing/name variants for the same seating object.,
+bed,bed,apply,Size modifier is non-essential.,
+bed cabinet,bedside cabinet,apply,Placement wording, both denote a small cabinet beside a bed.
+bed cabinet lamp,lamp,apply,Placement/style modifiers are non-essential to the general lamp class, specialized functional lamp types remain distinct.
+bed for pet,pet bed,apply,Animal-species/word-order modifiers, same general pet-bed category.
+bed small,bed,apply,Size modifier is non-essential.,
+bedside cabinet,bedside cabinet,apply,Placement wording, both denote a small cabinet beside a bed.
+bedside cabinet door,cabinet door,apply,Parent-room/location modifier does not change the cabinet-door class.,
+bedside cabinet drawer,cabinet drawer,apply,Parent-room/location modifier does not change the cabinet-drawer class.,
+bedside lamp,lamp,apply,Placement/style modifiers are non-essential to the general lamp class, specialized functional lamp types remain distinct.
+bench,bench,apply,Material/location/generic-use modifiers, specialized functional benches remain distinct.
+bicycle helmet,bicycle helmet,apply,Singular/plural normalization.,
+bicycle helmets,bicycle helmet,apply,Singular/plural normalization.,
+big bag,bag,apply,"Plurality, size, material, or quantity is non-essential to the general bag class.",
+billiard cue,billiard cue,apply,Plurality and common synonym, same billiards implement.
+billiard cues,billiard cue,apply,Plurality and common synonym, same billiards implement.
+binder,binder,apply,Plurality/quantity does not change the object class.,
+binders,binder,apply,Plurality/quantity does not change the object class.,
+blanket,blanket,apply,Plurality/quantity and style/use modifier, same general blanket class.
+blankets,blanket,apply,Plurality/quantity and style/use modifier, same general blanket class.
+board,board,apply,Singular/plural normalization.,
+board game,board game,apply,Singular/plural normalization.,
+board games,board game,apply,Singular/plural normalization.,
+boards,board,apply,Singular/plural normalization.,
+boat model,model,apply,"Subject modifier describes what the scale model depicts, not its general object category.",
+book,book,apply,Quantity does not change the object class.,
+bottle,bottle,apply,"Content, decoration, and plurality describe the bottle rather than a different underlying object class.",
+bottle of detergent,detergent,apply,"Content, decoration, and plurality describe the bottle rather than a different underlying object class.",
+bottle of soap,soap bottle,apply,"Content, decoration, and plurality describe the bottle rather than a different underlying object class.",
+bottle of water,water bottle,apply,"Content, decoration, and plurality describe the bottle rather than a different underlying object class.",
+bottle of wine,wine,apply,"Content, decoration, and plurality describe the bottle rather than a different underlying object class.",
+bottles,bottle,apply,"Content, decoration, and plurality describe the bottle rather than a different underlying object class.",
+bottles of water,water bottle,apply,"Content, decoration, and plurality describe the bottle rather than a different underlying object class.",
+bottles of wine,wine,apply,"Content, decoration, and plurality describe the bottle rather than a different underlying object class.",
+bowl,bowl,apply,Decoration/content and plurality are non-essential to the general bowl class.,
+bowl of fruit,bowl of fruit,apply,Decoration/content and plurality are non-essential to the general bowl class.,
+bowl of fruits,bowl of fruit,apply,Decoration/content and plurality are non-essential to the general bowl class.,
+bowl of sweets,bowl of sweets,apply,Decoration/content and plurality are non-essential to the general bowl class.,
+bowl with sweets,bowl of sweets,apply,Decoration/content and plurality are non-essential to the general bowl class.,
+bowls,bowl,apply,Decoration/content and plurality are non-essential to the general bowl class.,
+box,box,apply,"Material, contents, plurality, or quantity do not change the general box class; dedicated functional boxes are kept separate.",
+box of food,box,apply,"Material, contents, plurality, or quantity do not change the general box class; dedicated functional boxes are kept separate.",
+box of fruit,box,apply,"Material, contents, plurality, or quantity do not change the general box class; dedicated functional boxes are kept separate.",
+box of paper,box,apply,"Material, contents, plurality, or quantity do not change the general box class; dedicated functional boxes are kept separate.",
+box of something,box,apply,"Material, contents, plurality, or quantity do not change the general box class; dedicated functional boxes are kept separate.",
+box with books,box,apply,"Material, contents, plurality, or quantity do not change the general box class; dedicated functional boxes are kept separate.",
+box with jewelry,box,apply,"Material, contents, plurality, or quantity do not change the general box class; dedicated functional boxes are kept separate.",
+box with photos,box,apply,"Material, contents, plurality, or quantity do not change the general box class; dedicated functional boxes are kept separate.",
+box with shoes,box,apply,"Material, contents, plurality, or quantity do not change the general box class; dedicated functional boxes are kept separate.",
+box with tea,box,apply,"Material, contents, plurality, or quantity do not change the general box class; dedicated functional boxes are kept separate.",
+box with toys,box,apply,"Material, contents, plurality, or quantity do not change the general box class; dedicated functional boxes are kept separate.",
+boxes,box,apply,"Material, contents, plurality, or quantity do not change the general box class; dedicated functional boxes are kept separate.",
+boxes with books,box,apply,"Material, contents, plurality, or quantity do not change the general box class; dedicated functional boxes are kept separate.",
+bread box,bread box,apply,Spacing variant.,
+breadbox,bread box,apply,Spacing variant.,
+brochure,brochure,apply,Singular/plural normalization.,
+brochures,brochure,apply,Singular/plural normalization.,
+brush,brush,apply,Singular/plural normalization, functional brush subtypes remain distinct.
+brushes,brush,apply,Singular/plural normalization, functional brush subtypes remain distinct.
+bucket,bucket,apply,Singular/plural normalization.,
+buckets,bucket,apply,Singular/plural normalization.,
+cabinet,cabinet,apply,"Annotation/context suffixes describe location or contents, not a different cabinet class.",
+cabinet /otherroom,cabinet,apply,"Annotation/context suffixes describe location or contents, not a different cabinet class.",
+cabinet /w clutter,cabinet,apply,"Annotation/context suffixes describe location or contents, not a different cabinet class.",
+cabinet /w cluttered art,cabinet,apply,"Annotation/context suffixes describe location or contents, not a different cabinet class.",
+cabinet clutter,cabinet,apply,"Annotation/context suffixes describe location or contents, not a different cabinet class.",
+cabinet door,cabinet door,apply,Parent-room/location modifier does not change the cabinet-door class.,
+cabinet drawer,cabinet drawer,apply,Parent-room/location modifier does not change the cabinet-drawer class.,
+cabinet kitchen,kitchen cabinet,apply,Word-order and vertical-position modifiers, all are kitchen cabinets.
+cabinet mirror,mirror,apply,"Location/context modifiers describe placement, not a different mirror class.",
+cable,cable,apply,Singular/plural normalization.,
+cables,cable,apply,Singular/plural normalization.,
+can,can,apply,Plurality/content modifier, same general can container.
+can of paint,can,apply,Plurality/content modifier, same general can container.
+cans,can,apply,Plurality/content modifier, same general can container.
+cans of paint,can,apply,Plurality/content modifier, same general can container.
+car model,model,apply,"Subject modifier describes what the scale model depicts, not its general object category.",
+cardboard box,box,apply,"Material, contents, plurality, or quantity do not change the general box class; dedicated functional boxes are kept separate.",
+carpet,carpet,apply,"Location, material, and rolled-state modifiers are non-essential to the general carpet class.",
+carpet roll,carpet,apply,"Location, material, and rolled-state modifiers are non-essential to the general carpet class.",
+case,case,apply,Singular/plural normalization, dedicated cases remain distinct.
+cases,case,apply,Singular/plural normalization, dedicated cases remain distinct.
+cat bed,pet bed,apply,Animal-species/word-order modifiers, same general pet-bed category.
+cd,cd,apply,Plurality/quantity does not change the object class.,
+cds,cd,apply,Plurality/quantity does not change the object class.,
+ceiling decorative lamp,lamp,apply,Placement/style modifiers are non-essential to the general lamp class, specialized functional lamp types remain distinct.
+ceiling fixture,light fixture,apply,Equivalent wording/location modifier for a general light fixture.,
+ceiling lamp,lamp,apply,Placement/style modifiers are non-essential to the general lamp class, specialized functional lamp types remain distinct.
+chair,chair,apply,"Context, shape, fold/state, and quantity modifiers are non-essential to the general chair class.",
+chair /w clutter,chair,apply,"Context, shape, fold/state, and quantity modifiers are non-essential to the general chair class.",
+chest drawer,chest of drawers,apply,Grammatical variants of the same furniture class.,
+chest of drawer,chest of drawers,apply,Grammatical variants of the same furniture class.,
+chest of drawers,chest of drawers,apply,Grammatical variants of the same furniture class.,
+circular sofa,sofa,apply,Common synonym plus shape/quantity modifiers, same general sofa class.
+cleaner bottle,soap bottle,apply,"Content, decoration, and plurality describe the bottle rather than a different underlying object class.",
+clock,clock,apply,Style/mounting-location modifiers are non-essential, functional clock subtypes are kept separate.
+closet shelf,shelf,apply,Height/location modifiers are non-essential to the general shelf class, function/content-specific shelves remain separate.
+cloth,cloth,apply,Decorative style modifier is non-essential.,
+cloth dryer,clothes dryer,apply,Wording variant for the same appliance.,
+cloth hanger,clothes hanger,apply,Plurality and clothing-type wording, same general garment hanger.
+cloth hangers,clothes hanger,apply,Plurality and clothing-type wording, same general garment hanger.
+clothes,clothes,apply,State/location/quantity modifiers do not change the clothing class.,
+clothes dryer,clothes dryer,apply,Wording variant for the same appliance.,
+clothes hanger,clothes hanger,apply,Plurality and clothing-type wording, same general garment hanger.
+clothes on shelf,clothes,apply,State/location/quantity modifiers do not change the clothing class.,
+coat hanger,clothes hanger,apply,Plurality and clothing-type wording, same general garment hanger.
+coffee machine,coffee maker,apply,Common synonyms for the same appliance.,
+coffee maker,coffee maker,apply,Common synonyms for the same appliance.,
+computer chair,office chair,apply,Equivalent usage/context labels for the same desk/office seating class.,
+computer mouse,computer mouse,apply,The explicit computer term and generic label refer to the same indoor device in this vocabulary.,
+computer tower,computer tower,apply,Abbreviation/synonym normalization.,
+container,container,apply,Singular/plural normalization.,
+containers,container,apply,Singular/plural normalization.,
+cooker hood,extractor hood,apply,Common names/location wording for the same kitchen extraction appliance.,
+cosmetic,cosmetics,apply,"Singular/plural, quantity, and location modifiers; same general cosmetics class.",
+cosmetics,cosmetics,apply,"Singular/plural, quantity, and location modifiers; same general cosmetics class.",
+couch,sofa,apply,Common synonym plus shape/quantity modifiers, same general sofa class.
+countertop,countertop,apply,Annotation location suffix is non-semantic.,
+countertop /otherroom,countertop,apply,Annotation location suffix is non-semantic.,
+countertop item,countertop item,apply,Location/plural wording variants for the same generic countertop-item label.,
+cushion,cushion,apply,Shape modifier is non-essential.,
+decorative bottle,bottle,apply,"Content, decoration, and plurality describe the bottle rather than a different underlying object class.",
+decorative bowl,bowl,apply,Decoration/content and plurality are non-essential to the general bowl class.,
+decorative cloth,cloth,apply,Decorative style modifier is non-essential.,
+decorative dinnerware,dinnerware,apply,Decorative style modifier is non-essential.,
+decorative frame,frame,apply,Content/style modifiers, all denote a general frame object. Specialized mirror/screen/shower frames remain distinct.
+decorative lamp,lamp,apply,Placement/style modifiers are non-essential to the general lamp class, specialized functional lamp types remain distinct.
+decorative plant,plant,apply,Decorative modifier is non-essential.,
+decorative plate,plate,apply,"Plurality, quantity, and decorative style are non-essential; non-dish plates such as steel plate remain separate.",
+decorative tray,tray,apply,Style/quantity modifiers are non-essential, functional tray subtypes remain distinct.
+decorative vase,vase,apply,Style/content-context modifiers are non-essential to the general vase class.,
+decorative vessel,vessel,apply,Decorative style modifier is non-essential.,
+desk chair,office chair,apply,Equivalent usage/context labels for the same desk/office seating class.,
+desk lamp,lamp,apply,Placement/style modifiers are non-essential to the general lamp class, specialized functional lamp types remain distinct.
+detergent bottle,soap bottle,apply,"Content, decoration, and plurality describe the bottle rather than a different underlying object class.",
+dining chair,dining chair,apply,Equivalent wording for the same functional chair subtype.,
+dining table,dining table,apply,Equivalent wording for the same functional table subtype.,
+dinner chair,dining chair,apply,Equivalent wording for the same functional chair subtype.,
+dinner table,dining table,apply,Equivalent wording for the same functional table subtype.,
+dinnerware,dinnerware,apply,Decorative style modifier is non-essential.,
+display of pictures,picture,apply,Plurality/quantity/display-context modifiers, same general picture class.
+dog bed,pet bed,apply,Animal-species/word-order modifiers, same general pet-bed category.
+double armchair,armchair,apply,"Size, quantity, or placement/context modifier; all are armchairs.",
+drawer,drawer,apply,Singular/plural normalization.,
+drawers,drawer,apply,Singular/plural normalization.,
+dried flowers,flower,apply,State/plural modifier is non-essential to the general flower class.,
+dustbin,trash can,apply,Spacing/common synonym normalization.,
+electric freshener,air freshener,apply,Same general appliance, wording/power-source modifier is non-essential.
+exercise ball,exercise ball,apply,Common synonyms for the same exercise object.,
+exercise bike,exercise bike,apply,Common synonyms for the same exercise machine.,
+exercise equipment,exercise equipment,apply,Location/context synonym, same generic equipment class.
+exercise mat,exercise mat,apply,Usage/context modifiers are non-essential to the general exercise-mat class.,
+exhibition picture,picture,apply,Plurality/quantity/display-context modifiers, same general picture class.
+extractor,extractor hood,apply,Common names/location wording for the same kitchen extraction appliance.,
+extractor hood,extractor hood,apply,Common names/location wording for the same kitchen extraction appliance.,
+faucet,faucet,apply,Tap/faucet synonyms with location modifiers, same general water-control fixture.
+file,file,apply,Quantity does not change the object class.,
+fireplace mirror,mirror,apply,"Location/context modifiers describe placement, not a different mirror class.",
+fitness ball,exercise ball,apply,Common synonyms for the same exercise object.,
+flag,flag,apply,Country modifier is non-essential to the general flag class.,
+floor lamp,lamp,apply,Placement/style modifiers are non-essential to the general lamp class, specialized functional lamp types remain distinct.
+flower,flower,apply,State/plural modifier is non-essential to the general flower class.,
+flower vase,vase,apply,Style/content-context modifiers are non-essential to the general vase class.,
+folded chair,chair,apply,"Context, shape, fold/state, and quantity modifiers are non-essential to the general chair class.",
+folded table,table,apply,Folded state is non-essential, functional table subtypes remain distinct.
+folding chair,chair,apply,"Context, shape, fold/state, and quantity modifiers are non-essential to the general chair class.",
+frame,frame,apply,Content/style modifiers, all denote a general frame object. Specialized mirror/screen/shower frames remain distinct.
+fridge,refrigerator,apply,Common synonym and size modifier, same general appliance.
+fruit bowl,bowl,apply,Decoration/content and plurality are non-essential to the general bowl class.,
+fur carpet,carpet,apply,"Location, material, and rolled-state modifiers are non-essential to the general carpet class.",
+garden bench,bench,apply,Material/location/generic-use modifiers, specialized functional benches remain distinct.
+guitar case,guitar case,apply,Singular/plural normalization.,
+guitar cases,guitar case,apply,Singular/plural normalization.,
+gym equipment,exercise equipment,apply,Location/context synonym, same generic equipment class.
+gym mat,exercise mat,apply,Usage/context modifiers are non-essential to the general exercise-mat class.,
+hand soap,soap,apply,Form/use modifiers are non-essential to the general soap class.,
+hand towel,towel,apply,"Plurality, quantity, and location/use modifiers are non-essential to the general towel class; paper towels remain separate.",
+hanging clothes,clothes,apply,State/location/quantity modifiers do not change the clothing class.,
+high shelf,shelf,apply,Height/location modifiers are non-essential to the general shelf class, function/content-specific shelves remain separate.
+jacket,jacket,apply,Quantity does not change the object class.,
+kitchen cabinet,kitchen cabinet,apply,Word-order and vertical-position modifiers, all are kitchen cabinets.
+kitchen cabinet door,cabinet door,apply,Parent-room/location modifier does not change the cabinet-door class.,
+kitchen cabinet drawer,cabinet drawer,apply,Parent-room/location modifier does not change the cabinet-drawer class.,
+kitchen cabinet lower,kitchen cabinet,apply,Word-order and vertical-position modifiers, all are kitchen cabinets.
+kitchen counter item,countertop item,apply,Location/plural wording variants for the same generic countertop-item label.,
+kitchen countertop item,countertop item,apply,Location/plural wording variants for the same generic countertop-item label.,
+kitchen countertop items,countertop item,apply,Location/plural wording variants for the same generic countertop-item label.,
+kitchen extractor,extractor hood,apply,Common names/location wording for the same kitchen extraction appliance.,
+kitchen knife set,knife,apply,Quantity/set and room-use modifiers, same underlying knife class.
+kitchen lower cabinet,kitchen cabinet,apply,Word-order and vertical-position modifiers, all are kitchen cabinets.
+kitchen lower shelf,shelf,apply,Height/location modifiers are non-essential to the general shelf class, function/content-specific shelves remain separate.
+kitchen shelf,shelf,apply,Height/location modifiers are non-essential to the general shelf class, function/content-specific shelves remain separate.
+kitchen sink,sink,apply,Room/shape wording and common synonym, same general sink/washbasin fixture.
+kitchen towel,towel,apply,"Plurality, quantity, and location/use modifiers are non-essential to the general towel class; paper towels remain separate.",
+kitchen utensil,kitchen utensil,apply,Singular/plural normalization.,
+kitchen utensils,kitchen utensil,apply,Singular/plural normalization.,
+knife,knife,apply,Quantity/set and room-use modifiers, same underlying knife class.
+knife set,knife,apply,Quantity/set and room-use modifiers, same underlying knife class.
+l-shaped sofa,sofa,apply,Common synonym plus shape/quantity modifiers, same general sofa class.
+lamp,lamp,apply,Placement/style modifiers are non-essential to the general lamp class, specialized functional lamp types remain distinct.
+lamp shade,lampshade,apply,Spacing variant.,
+lampshade,lampshade,apply,Spacing variant.,
+laundry machine,washing machine,apply,Common wording for the same appliance.,
+led tv,tv,apply,Display technology and mounting-location modifiers are non-essential.,
+light fixture,light fixture,apply,Equivalent wording/location modifier for a general light fixture.,
+lighting fixture,light fixture,apply,Equivalent wording/location modifier for a general light fixture.,
+liquid soap,soap,apply,Form/use modifiers are non-essential to the general soap class.,
+magazine,magazine,apply,Plurality/quantity does not change the object class.,
+magazines,magazine,apply,Plurality/quantity does not change the object class.,
+mantel,mantel,apply,Spelling variant in this context.,
+mantle,mantel,apply,Spelling variant in this context.,
+mascot,mascot,apply,Singular/plural normalization.,
+mascots,mascot,apply,Singular/plural normalization.,
+mini fridge,refrigerator,apply,Common synonym and size modifier, same general appliance.
+mirror,mirror,apply,"Location/context modifiers describe placement, not a different mirror class.",
+mirror /otherroom,mirror,apply,"Location/context modifiers describe placement, not a different mirror class.",
+model,model,apply,"Subject modifier describes what the scale model depicts, not its general object category.",
+mouse,computer mouse,apply,The explicit computer term and generic label refer to the same indoor device in this vocabulary.,
+napkin,napkin,apply,Singular/plural normalization.,
+napkins,napkin,apply,Singular/plural normalization.,
+night lamp,lamp,apply,Placement/style modifiers are non-essential to the general lamp class, specialized functional lamp types remain distinct.
+notebook,notebook,apply,Singular/plural normalization.,
+notebooks,notebook,apply,Singular/plural normalization.,
+office chair,office chair,apply,Equivalent usage/context labels for the same desk/office seating class.,
+painting,painting,apply,Annotation location suffix is non-semantic.,
+painting /otherroom,painting,apply,Annotation location suffix is non-semantic.,
+painting frame,frame,apply,Content/style modifiers, all denote a general frame object. Specialized mirror/screen/shower frames remain distinct.
+painting roll,painting roll,apply,Singular/plural normalization.,
+painting rolls,painting roll,apply,Singular/plural normalization.,
+paper,paper,apply,Plurality/quantity does not change the class.,
+paper towel,paper towel,apply,Singular/plural normalization.,
+paper towels,paper towel,apply,Singular/plural normalization.,
+papers,paper,apply,Plurality/quantity does not change the class.,
+pc tower,computer tower,apply,Abbreviation/synonym normalization.,
+pet bed,pet bed,apply,Animal-species/word-order modifiers, same general pet-bed category.
+photo,photo,apply,Singular/plural normalization.,
+photo mount,photo mount,apply,Singular/plural normalization.,
+photo mounts,photo mount,apply,Singular/plural normalization.,
+photos,photo,apply,Singular/plural normalization.,
+picture,picture,apply,Plurality/quantity/display-context modifiers, same general picture class.
+picture frame,frame,apply,Content/style modifiers, all denote a general frame object. Specialized mirror/screen/shower frames remain distinct.
+pictures,picture,apply,Plurality/quantity/display-context modifiers, same general picture class.
+pile of magazines,magazine,apply,Plurality/quantity does not change the object class.,
+pillow,pillow,apply,Quantity does not change the object class.,
+plant,plant,apply,Decorative modifier is non-essential.,
+plastic bag,bag,apply,"Plurality, size, material, or quantity is non-essential to the general bag class.",
+plate,plate,apply,"Plurality, quantity, and decorative style are non-essential; non-dish plates such as steel plate remain separate.",
+plates,plate,apply,"Plurality, quantity, and decorative style are non-essential; non-dish plates such as steel plate remain separate.",
+pole,pole,apply,Singular/plural normalization.,
+poles,pole,apply,Singular/plural normalization.,
+pool stick,billiard cue,apply,Plurality and common synonym, same billiards implement.
+pot,pot,apply,Quantity does not change the object class.,
+powder soap,soap,apply,Form/use modifiers are non-essential to the general soap class.,
+product box,box,apply,"Material, contents, plurality, or quantity do not change the general box class; dedicated functional boxes are kept separate.",
+product boxes,box,apply,"Material, contents, plurality, or quantity do not change the general box class; dedicated functional boxes are kept separate.",
+range hood,extractor hood,apply,Common names/location wording for the same kitchen extraction appliance.,
+refrigerator,refrigerator,apply,Common synonym and size modifier, same general appliance.
+remote control,remote control,apply,Device-context modifier, same remote-control object.
+rod,rod,apply,Singular/plural normalization.,
+rods,rod,apply,Singular/plural normalization.,
+rolled carpet,carpet,apply,"Location, material, and rolled-state modifiers are non-essential to the general carpet class.",
+round chair,chair,apply,"Context, shape, fold/state, and quantity modifiers are non-essential to the general chair class.",
+round cushion,cushion,apply,Shape modifier is non-essential.,
+router,router,apply,Connectivity modifier is non-essential to the general router class.,
+set of armchairs,armchair,apply,"Size, quantity, or placement/context modifier; all are armchairs.",
+set of boxes,box,apply,"Material, contents, plurality, or quantity do not change the general box class; dedicated functional boxes are kept separate.",
+set of cosmetics,cosmetics,apply,"Singular/plural, quantity, and location modifiers; same general cosmetics class.",
+set of hangers,clothes hanger,apply,Plurality and clothing-type wording, same general garment hanger.
+set of knives,knife,apply,Quantity/set and room-use modifiers, same underlying knife class.
+set of pictures,picture,apply,Plurality/quantity/display-context modifiers, same general picture class.
+set of towels,towel,apply,"Plurality, quantity, and location/use modifiers are non-essential to the general towel class; paper towels remain separate.",
+sheet,sheet,apply,Singular/plural normalization.,
+sheet music stand,music stand,apply,Quantity and wording variant, both refer to stands for sheet music.
+sheets,sheet,apply,Singular/plural normalization.,
+shelf,shelf,apply,Height/location modifiers are non-essential to the general shelf class, function/content-specific shelves remain separate.
+ship model,model,apply,"Subject modifier describes what the scale model depicts, not its general object category.",
+shoe,shoe,apply,Plurality/quantity/location state does not change the shoe class.,
+shoe rack,shoe rack,apply,Grammatical variant.,
+shoes,shoe,apply,Plurality/quantity/location state does not change the shoe class.,
+shoes on shelf,shoe,apply,Plurality/quantity/location state does not change the shoe class.,
+shoes rack,shoe rack,apply,Grammatical variant.,
+shower ceiling lamp,lamp,apply,Placement/style modifiers are non-essential to the general lamp class, specialized functional lamp types remain distinct.
+shower cosmetics,cosmetics,apply,"Singular/plural, quantity, and location modifiers; same general cosmetics class.",
+shower mirror,mirror,apply,"Location/context modifiers describe placement, not a different mirror class.",
+shower shelf,shelf,apply,Height/location modifiers are non-essential to the general shelf class, function/content-specific shelves remain separate.
+shower tap,faucet,apply,Tap/faucet synonyms with location modifiers, same general water-control fixture.
+shower utensil,bathroom utensil,apply,Room/location wording variants for the same generic bathroom-utensil label.,
+shutter,shutter,apply,Singular/plural normalization.,
+shutters,shutter,apply,Singular/plural normalization.,
+sink,sink,apply,Room/shape wording and common synonym, same general sink/washbasin fixture.
+sink tap,faucet,apply,Tap/faucet synonyms with location modifiers, same general water-control fixture.
+sink/basin,sink,apply,Room/shape wording and common synonym, same general sink/washbasin fixture.
+sitting bench,bench,apply,Material/location/generic-use modifiers, specialized functional benches remain distinct.
+soap,soap,apply,Form/use modifiers are non-essential to the general soap class.,
+soap bottle,soap bottle,apply,"Content, decoration, and plurality describe the bottle rather than a different underlying object class.",
+sofa,sofa,apply,Common synonym plus shape/quantity modifiers, same general sofa class.
+sofa set,sofa,apply,Common synonym plus shape/quantity modifiers, same general sofa class.
+spa armchair,armchair,apply,"Size, quantity, or placement/context modifier; all are armchairs.",
+spa bathtub,bathtub,apply,Spacing and location/style modifier, same general bathtub object.
+spa bench,bench,apply,Material/location/generic-use modifiers, specialized functional benches remain distinct.
+stack of albums,album,apply,Plurality/quantity does not change the object class.,
+stack of bags,bag,apply,"Plurality, size, material, or quantity is non-essential to the general bag class.",
+stack of binders,binder,apply,Plurality/quantity does not change the object class.,
+stack of blankets,blanket,apply,Plurality/quantity and style/use modifier, same general blanket class.
+stack of books,book,apply,Quantity does not change the object class.,
+stack of boxes,box,apply,"Material, contents, plurality, or quantity do not change the general box class; dedicated functional boxes are kept separate.",
+stack of cds,cd,apply,Plurality/quantity does not change the object class.,
+stack of chairs,chair,apply,"Context, shape, fold/state, and quantity modifiers are non-essential to the general chair class.",
+stack of clothes,clothes,apply,State/location/quantity modifiers do not change the clothing class.,
+stack of files,file,apply,Quantity does not change the object class.,
+stack of jackets,jacket,apply,Quantity does not change the object class.,
+stack of magazines,magazine,apply,Plurality/quantity does not change the object class.,
+stack of music stands,music stand,apply,Quantity and wording variant, both refer to stands for sheet music.
+stack of papers,paper,apply,Plurality/quantity does not change the class.,
+stack of pillows,pillow,apply,Quantity does not change the object class.,
+stack of plates,plate,apply,"Plurality, quantity, and decorative style are non-essential; non-dish plates such as steel plate remain separate.",
+stack of pots,pot,apply,Quantity does not change the object class.,
+stack of product boxes,box,apply,"Material, contents, plurality, or quantity do not change the general box class; dedicated functional boxes are kept separate.",
+stack of shoes,shoe,apply,Plurality/quantity/location state does not change the shoe class.,
+stack of t-shirts,t-shirt,apply,Quantity does not change the object class.,
+stack of towels,towel,apply,"Plurality, quantity, and location/use modifiers are non-essential to the general towel class; paper towels remain separate.",
+stack of trays,tray,apply,Style/quantity modifiers are non-essential, functional tray subtypes remain distinct.
+stacked chair,chair,apply,"Context, shape, fold/state, and quantity modifiers are non-essential to the general chair class.",
+stone,stone,apply,Singular/plural normalization.,
+stone bench,bench,apply,Material/location/generic-use modifiers, specialized functional benches remain distinct.
+stones,stone,apply,Singular/plural normalization.,
+stool,stool,apply,Singular/plural normalization.,
+stools,stool,apply,Singular/plural normalization.,
+t-shirt,t-shirt,apply,Quantity does not change the object class.,
+table,table,apply,Folded state is non-essential, functional table subtypes remain distinct.
+table lamp,lamp,apply,Placement/style modifiers are non-essential to the general lamp class, specialized functional lamp types remain distinct.
+tap,faucet,apply,Tap/faucet synonyms with location modifiers, same general water-control fixture.
+throw blanket,blanket,apply,Plurality/quantity and style/use modifier, same general blanket class.
+tile,tile,apply,Singular/plural normalization.,
+tiles,tile,apply,Singular/plural normalization.,
+towel,towel,apply,"Plurality, quantity, and location/use modifiers are non-essential to the general towel class; paper towels remain separate.",
+training mat,exercise mat,apply,Usage/context modifiers are non-essential to the general exercise-mat class.,
+trash can,trash can,apply,Spacing/common synonym normalization.,
+trashcan,trash can,apply,Spacing/common synonym normalization.,
+tray,tray,apply,Style/quantity modifiers are non-essential, functional tray subtypes remain distinct.
+tv,tv,apply,Display technology and mounting-location modifiers are non-essential.,
+tv remote,remote control,apply,Device-context modifier, same remote-control object.
+vase,vase,apply,Style/content-context modifiers are non-essential to the general vase class.,
+ventilation hood,extractor hood,apply,Common names/location wording for the same kitchen extraction appliance.,
+vessel,vessel,apply,Decorative style modifier is non-essential.,
+vessel sink,sink,apply,Room/shape wording and common synonym, same general sink/washbasin fixture.
+wall clock,clock,apply,Style/mounting-location modifiers are non-essential, functional clock subtypes are kept separate.
+wall lamp,lamp,apply,Placement/style modifiers are non-essential to the general lamp class, specialized functional lamp types remain distinct.
+wall shelf,shelf,apply,Height/location modifiers are non-essential to the general shelf class, function/content-specific shelves remain separate.
+wall tv,tv,apply,Display technology and mounting-location modifiers are non-essential.,
+washbasin,sink,apply,Room/shape wording and common synonym, same general sink/washbasin fixture.
+washer-dryer,washer-dryer,apply,Equivalent wording for the same combined appliance.,
+washing machine,washing machine,apply,Common wording for the same appliance.,
+washing machine and dryer,washer-dryer,apply,Equivalent wording for the same combined appliance.,
+weight,weight,apply,Singular/plural normalization.,
+weights,weight,apply,Singular/plural normalization.,
+wifi router,router,apply,Connectivity modifier is non-essential to the general router class.,
+wine bottle,wine,apply,"Content, decoration, and plurality describe the bottle rather than a different underlying object class.",
+workout bike,exercise bike,apply,Common synonyms for the same exercise machine.,
+basket of something,basket,,,
+bath bar,bath curtain,,,
+bath curtain,bath curtain,,,
+bath curtain bar,bath curtain,,,
+bathroom stuff,bathroom utensil,,,
+bedding,bed,,,
+box of tissue,box of tissue,,,
+box of tissues,box of tissue,,,
+broom,broom,,,
+broomstick,broom,,,
+cabinet,cabinet,,,
+cabinet counter,cabinet,,,
+cabinet door,cabinet,,,
+cabinet drawer,cabinet,,,
+cabinet parts,cabinet,,,
+cabinet table,cabinet,,,
+cat food,cat food,,,
+cat food bag,cat food,,,
+chaise,chaise,,,
+chaise longue,chaise,,,
+cup,cup,,,
+cups,cup,,,
+foosball game table,foosball table,,,
+foosball table,foosball table,,,
+fuse box,fuse box,,,
+fuse panel,fuse box,,,
+garage door motor,garage door motor,,,
+garage door opener motor,garage door motor,,,
+garage door opener bar,garage door opener railing,,,
+garage door opener railing,garage door opener railing,,,
+garage door railing,garage door opener railing,,,
+guitar case,guitar case,,,
+guitar case cover,guitar case,,,
+hi-hat,hi-hat,,,
+hi-hat stand,hi-hat,,,
+iron board,ironing board,,,
+ironing board,ironing board,,,
+jewelry,jewelry,,,
+jewelry box,jewelry,,,
+kitchen counter,kitchen counter,,,
+kitchen counter support,kitchen counter,,,
+magic marker,magic marker,,,
+magic marker box,magic marker,,,
+projector,projector screen,,,
+projector screen,projector screen,,,
+ragdoll,ragdoll,,,
+ragdoll cat,ragdoll,,,
+refrigerator,refrigerator,,,
+refrigerator cabinet,refrigerator,,,
+spray,spray can,,,
+spray can,spray can,,,
+shower,shower,,,
+shower bar,shower curtain,,,
+shower base,shower base,,,
+shower battery,shower control,,,
+shower bench,shower seat,,,
+shower cabin,shower,,,
+shower cabinet,shower,,,
+shower caddy,shower,,,
+shower case,shower,,,
+shower cockpit,shower,,,
+shower curtain bar,shower grab bar,,,
+shower curtain rod,shower curtain,,,
+shower dial,shower control,,,
+shower door frame,shower,,,
+shower door knob,shower door handle,,,
+shower frame,shower,,,
+shower handle,shower door handle,,,
+shower handrail,shower grab bar,,,
+shower hose,shower hose,,,
+shower hose/head,shower hose,,,
+shower knob,shower control,,,
+shower rail,shower,,,
+shower rod,shower,,,
+shower seat,shower seat,,,
+shower soap shelf,shower shelf,,,
+shower stall,shower,,,
+shower step,shower,,,
+shower tray,shower base,,,
+shower valve,shower control,,,
+shower-bath cabinet,shower,,,
+soap dispenser,soap dispenser,,,
+soap dispenser shelf in shower,soap dispenser,,,
+stereo,stereo,,,
+stereo set,stereo,,,
+stove,stove,,,
+stovetop,stove,,,
