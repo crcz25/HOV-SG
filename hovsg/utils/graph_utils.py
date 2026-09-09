@@ -495,17 +495,29 @@ def compute_3d_bbox_iou(bbox1, bbox2, padding=0):
     overlap_max = np.minimum(bbox1_max, bbox2_max)
     overlap_size = np.maximum(overlap_max - overlap_min, 0.0)
 
-    overlap_volume = np.prod(overlap_size)
-    bbox1_volume = np.prod(bbox1_max - bbox1_min)
-    bbox2_volume = np.prod(bbox2_max - bbox2_min)
+    bbox1_size = bbox1_max - bbox1_min
+    bbox2_size = bbox2_max - bbox2_min
 
-    obj_1_overlap = overlap_volume / bbox1_volume
-    obj_2_overlap = overlap_volume / bbox2_volume
-    max_overlap = max(obj_1_overlap, obj_2_overlap)
+    # A non-empty point cloud can still have a degenerate bounding box (for
+    # example, a single point or points lying on an axis-aligned plane).  Such
+    # a box has no 3-D volume, so volumetric IoU is undefined.  Treat it as no
+    # volumetric overlap instead of dividing by zero and returning NaN.
+    if (
+        not np.all(np.isfinite(bbox1_size))
+        or not np.all(np.isfinite(bbox2_size))
+        or np.any(bbox1_size <= 0.0)
+        or np.any(bbox2_size <= 0.0)
+    ):
+        return 0.0
 
-    iou = overlap_volume / (bbox1_volume + bbox2_volume - overlap_volume)
+    overlap_volume = float(np.prod(overlap_size))
+    bbox1_volume = float(np.prod(bbox1_size))
+    bbox2_volume = float(np.prod(bbox2_size))
+    union_volume = bbox1_volume + bbox2_volume - overlap_volume
+    if not np.isfinite(union_volume) or union_volume <= 0.0:
+        return 0.0
 
-    return iou
+    return float(np.clip(overlap_volume / union_volume, 0.0, 1.0))
 
 
 def merge_3d_masks(mask_list, overlap_threshold=0.5, radius=0.02, iou_thresh=0.05):
@@ -517,7 +529,16 @@ def merge_3d_masks(mask_list, overlap_threshold=0.5, radius=0.02, iou_thresh=0.0
     :param iou_thresh (float): threshold for iou
     :return: merged point clouds and features
     """
-    
+
+    # A 2-D segmentation can contain no valid depth pixels, which produces an
+    # empty 3-D mask.  Open3D warns when asked to build either a bounding box or
+    # a DBSCAN KD-tree for such a cloud, so discard empty masks before invoking
+    # either operation.  Returning an empty list also keeps all-empty frames a
+    # valid input for both sequential and hierarchical merging.
+    mask_list = [pcd for pcd in mask_list if not pcd.is_empty()]
+    if not mask_list:
+        return []
+
     aa_bb = [pcd.get_axis_aligned_bounding_box() for pcd in mask_list]
     overlap_matrix = np.zeros((len(mask_list), len(mask_list)))
 
