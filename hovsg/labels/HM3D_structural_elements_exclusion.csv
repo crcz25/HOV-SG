@@ -1,0 +1,166 @@
+structural_element,instance_count,category,recommended_exclude,reason
+wall,25036,wall_surface,yes,Architectural wall or wall surface
+ceiling,4440,ceiling_surface,yes,Architectural ceiling surface
+door,3622,door_opening,yes,Architectural door/opening or integrated door assembly
+door frame,3477,door_opening,yes,Architectural door/opening or integrated door assembly
+floor,3231,floor_surface,yes,Architectural floor surface
+window,3189,window_opening,yes,Architectural window/opening or integrated window assembly
+window frame,2180,window_opening,yes,Architectural window/opening or integrated window assembly
+stairs,731,stairs_and_railings,yes,Permanent circulation/guarding element
+beam,529,structural_support,yes,Load-bearing or structural support element
+shower wall,461,wall_surface,yes,Architectural wall or wall surface
+pipe,449,building_service,yes,Integrated building service/infrastructure element
+door knob,343,door_hardware,yes,Integrated architectural door hardware
+ventilation,338,building_service,yes,Integrated building service/infrastructure element
+support beam,265,structural_support,yes,Load-bearing or structural support element
+vent,251,building_service,yes,Integrated building service/infrastructure element
+window glass,223,window_opening,yes,Architectural window/opening or integrated window assembly
+air vent,198,building_service,yes,Integrated building service/infrastructure element
+ceiling vent,178,building_service,yes,Integrated building service/infrastructure element
+pillar,143,structural_support,yes,Load-bearing or structural support element
+shower floor,143,floor_surface,yes,Architectural floor surface
+wall panel,116,partition_arch_trim,yes,"Permanent partition, finish, trim, or architectural detail"
+stairs railing,106,stairs_and_railings,yes,Permanent circulation/guarding element
+handrail,103,stairs_and_railings,yes,Permanent circulation/guarding element
+doorpost,102,door_opening,yes,Architectural door/opening or integrated door assembly
+stair step,100,stairs_and_railings,yes,Permanent circulation/guarding element
+window shutter,99,window_opening,yes,Architectural window/opening or integrated window assembly
+bath wall,88,wall_surface,yes,Architectural wall or wall surface
+door window,87,door_opening,yes,Architectural door/opening or integrated door assembly
+railing,87,stairs_and_railings,yes,Permanent circulation/guarding element
+ceiling wall,83,wall_surface,yes,Architectural wall or wall surface
+step,77,stairs_and_railings,yes,Permanent circulation/guarding element
+banister,76,stairs_and_railings,yes,Permanent circulation/guarding element
+wall board,75,partition_arch_trim,yes,"Permanent partition, finish, trim, or architectural detail"
+partition,72,partition_arch_trim,yes,"Permanent partition, finish, trim, or architectural detail"
+ceiling lower,64,ceiling_surface,yes,Architectural ceiling surface
+staircase handrail,61,stairs_and_railings,yes,Permanent circulation/guarding element
+fireplace wall,58,wall_surface,yes,Architectural wall or wall surface
+ceiling molding,45,partition_arch_trim,yes,"Permanent partition, finish, trim, or architectural detail"
+column,45,structural_support,yes,Load-bearing or structural support element
+door hinge,41,door_hardware,yes,Integrated architectural door hardware
+paneling,40,partition_arch_trim,yes,"Permanent partition, finish, trim, or architectural detail"
+arch,39,partition_arch_trim,yes,"Permanent partition, finish, trim, or architectural detail"
+balustrade,37,stairs_and_railings,yes,Permanent circulation/guarding element
+rafter,37,structural_support,yes,Load-bearing or structural support element
+sliding door,37,door_opening,yes,Architectural door/opening or integrated door assembly
+ceiling under stairs,34,ceiling_surface,yes,Architectural ceiling surface
+garage door,33,door_opening,yes,Architectural door/opening or integrated door assembly
+roof,32,roof_exterior_structure,yes,Permanent exterior architectural/structural element
+shower ceiling,32,ceiling_surface,yes,Architectural ceiling surface
+attic door,31,door_opening,yes,Architectural door/opening or integrated door assembly
+ceiling pipe,31,building_service,yes,Integrated building service/infrastructure element
+ledge,28,partition_arch_trim,yes,"Permanent partition, finish, trim, or architectural detail"
+kitchen wall,27,wall_surface,yes,Architectural wall or wall surface
+sliding glass door,26,door_opening,yes,Architectural door/opening or integrated door assembly
+doorstep,22,door_opening,yes,Architectural door/opening or integrated door assembly
+duct,22,building_service,yes,Integrated building service/infrastructure element
+window shutters,21,window_opening,yes,Architectural window/opening or integrated window assembly
+ceiling door,20,door_opening,yes,Architectural door/opening or integrated door assembly
+exhibition window,20,window_opening,yes,Architectural window/opening or integrated window assembly
+exhibition window frame,20,window_opening,yes,Architectural window/opening or integrated window assembly
+stair,20,stairs_and_railings,yes,Permanent circulation/guarding element
+recessed wall,19,partition_arch_trim,yes,"Permanent partition, finish, trim, or architectural detail"
+staircase trim,19,stairs_and_railings,yes,Permanent circulation/guarding element
+ceiling dome,17,ceiling_surface,yes,Architectural ceiling surface
+ceiling window,17,window_opening,yes,Architectural window/opening or integrated window assembly
+stone support structure,17,structural_support,yes,Load-bearing or structural support element
+air duct,16,building_service,yes,Integrated building service/infrastructure element
+door/window,16,door_opening,yes,Architectural door/opening or integrated door assembly
+fence,16,roof_exterior_structure,yes,Permanent exterior architectural/structural element
+archway,15,partition_arch_trim,yes,"Permanent partition, finish, trim, or architectural detail"
+ceiling duct,15,building_service,yes,Integrated building service/infrastructure element
+door stopper,15,door_hardware,yes,Integrated architectural door hardware
+floor vent,15,building_service,yes,Integrated building service/infrastructure element
+shower door,15,door_opening,yes,Architectural door/opening or integrated door assembly
+stair wall,15,wall_surface,yes,Architectural wall or wall surface
+closet mirror wall,14,wall_surface,yes,Architectural wall or wall surface
+doorway,14,door_opening,yes,Architectural door/opening or integrated door assembly
+wall /outside,14,wall_surface,yes,Architectural wall or wall surface
+door/window frame,13,door_opening,yes,Architectural door/opening or integrated door assembly
+shower wall cubby,13,built_in_recess,yes,Built-in wall recess or integrated shelving cavity
+bathroom wall,12,wall_surface,yes,Architectural wall or wall surface
+ceiling/west wall,12,wall_surface,yes,Architectural wall or wall surface
+door handle,12,door_hardware,yes,Integrated architectural door hardware
+garage door frame,12,door_opening,yes,Architectural door/opening or integrated door assembly
+recessed cubby,11,built_in_recess,yes,Built-in wall recess or integrated shelving cavity
+window /outside,11,window_opening,yes,Architectural window/opening or integrated window assembly
+molding,10,partition_arch_trim,yes,"Permanent partition, finish, trim, or architectural detail"
+wall top,10,wall_surface,yes,Architectural wall or wall surface
+niche,9,partition_arch_trim,yes,"Permanent partition, finish, trim, or architectural detail"
+shower pipe,9,building_service,yes,Integrated building service/infrastructure element
+attic hatch,8,door_opening,yes,Architectural door/opening or integrated door assembly
+balcony railing,8,stairs_and_railings,yes,Permanent circulation/guarding element
+baseboard,8,partition_arch_trim,yes,"Permanent partition, finish, trim, or architectural detail"
+bedroom ceiling,8,ceiling_surface,yes,Architectural ceiling surface
+ceiling border,7,partition_arch_trim,yes,"Permanent partition, finish, trim, or architectural detail"
+floor /outside,7,floor_surface,yes,Architectural floor surface
+sink pipe,7,building_service,yes,Integrated building service/infrastructure element
+ceiling support,6,structural_support,yes,Load-bearing or structural support element
+chimney,6,roof_exterior_structure,yes,Permanent exterior architectural/structural element
+patio floor,6,floor_surface,yes,Architectural floor surface
+wall indent,6,partition_arch_trim,yes,"Permanent partition, finish, trim, or architectural detail"
+bathroom floor,5,floor_surface,yes,Architectural floor surface
+drywall board,5,partition_arch_trim,yes,"Permanent partition, finish, trim, or architectural detail"
+elevator door,5,door_opening,yes,Architectural door/opening or integrated door assembly
+stair handle,5,stairs_and_railings,yes,Permanent circulation/guarding element
+wall detail,5,wall_surface,yes,Architectural wall or wall surface
+air vent installation,4,building_service,yes,Integrated building service/infrastructure element
+bathroom window,4,window_opening,yes,Architectural window/opening or integrated window assembly
+ceiling boarder,4,partition_arch_trim,yes,"Permanent partition, finish, trim, or architectural detail"
+fireplace floor,4,floor_surface,yes,Architectural floor surface
+gate,4,roof_exterior_structure,yes,Permanent exterior architectural/structural element
+staircase,4,stairs_and_railings,yes,Permanent circulation/guarding element
+wall beam,4,structural_support,yes,Load-bearing or structural support element
+wall cubby,4,built_in_recess,yes,Built-in wall recess or integrated shelving cavity
+window/door,4,door_opening,yes,Architectural door/opening or integrated door assembly
+cornice,3,partition_arch_trim,yes,"Permanent partition, finish, trim, or architectural detail"
+exhaust pipe,3,building_service,yes,Integrated building service/infrastructure element
+gutter,3,roof_exterior_structure,yes,Permanent exterior architectural/structural element
+post,3,structural_support,yes,Load-bearing or structural support element
+skylight,3,window_opening,yes,Architectural window/opening or integrated window assembly
+stairs trim,3,stairs_and_railings,yes,Permanent circulation/guarding element
+wall post,3,structural_support,yes,Load-bearing or structural support element
+window /otherroom,3,window_opening,yes,Architectural window/opening or integrated window assembly
+balcony,2,roof_exterior_structure,yes,Permanent exterior architectural/structural element
+bath door frame,2,door_opening,yes,Architectural door/opening or integrated door assembly
+bottom of stairs,2,stairs_and_railings,yes,Permanent circulation/guarding element
+ceiling under staircase,2,ceiling_surface,yes,Architectural ceiling surface
+glass door,2,door_opening,yes,Architectural door/opening or integrated door assembly
+recessed shelving,2,built_in_recess,yes,Built-in wall recess or integrated shelving cavity
+slab,2,structural_support,yes,Load-bearing or structural support element
+stairs wall,2,wall_surface,yes,Architectural wall or wall surface
+attic entrance,1,door_opening,yes,Architectural door/opening or integrated door assembly
+bath door,1,door_opening,yes,Architectural door/opening or integrated door assembly
+bath floor,1,floor_surface,yes,Architectural floor surface
+ceiling bedroom,1,ceiling_surface,yes,Architectural ceiling surface
+ceiling corridor,1,ceiling_surface,yes,Architectural ceiling surface
+ceiling floor,1,ceiling_surface,yes,Architectural ceiling surface
+ceiling panel,1,partition_arch_trim,yes,"Permanent partition, finish, trim, or architectural detail"
+closet floor,1,floor_surface,yes,Architectural floor surface
+compound wall,1,wall_surface,yes,Architectural wall or wall surface
+decorative window,1,window_opening,yes,Architectural window/opening or integrated window assembly
+door /otherroom,1,door_opening,yes,Architectural door/opening or integrated door assembly
+doorbell,1,door_hardware,yes,Integrated architectural door hardware
+drain,1,building_service,yes,Integrated building service/infrastructure element
+drainage,1,building_service,yes,Integrated building service/infrastructure element
+drainpipe,1,building_service,yes,Integrated building service/infrastructure element
+entrance arch,1,partition_arch_trim,yes,"Permanent partition, finish, trim, or architectural detail"
+floor /otherroom,1,floor_surface,yes,Architectural floor surface
+floor frame,1,partition_arch_trim,yes,"Permanent partition, finish, trim, or architectural detail"
+garden deck,1,roof_exterior_structure,yes,Permanent exterior architectural/structural element
+glass pane,1,window_opening,yes,Architectural window/opening or integrated window assembly
+kitchen ceiling,1,ceiling_surface,yes,Architectural ceiling surface
+office wall,1,wall_surface,yes,Architectural wall or wall surface
+patio,1,roof_exterior_structure,yes,Permanent exterior architectural/structural element
+shower window frame,1,window_opening,yes,Architectural window/opening or integrated window assembly
+skirting board,1,partition_arch_trim,yes,"Permanent partition, finish, trim, or architectural detail"
+solarium door,1,door_opening,yes,Architectural door/opening or integrated door assembly
+stair frame,1,stairs_and_railings,yes,Permanent circulation/guarding element
+staircase wall,1,wall_surface,yes,Architectural wall or wall surface
+stairs skirt,1,stairs_and_railings,yes,Permanent circulation/guarding element
+stairwell,1,stairs_and_railings,yes,Permanent circulation/guarding element
+terrace,1,roof_exterior_structure,yes,Permanent exterior architectural/structural element
+wall outside,1,wall_surface,yes,Architectural wall or wall surface
+wall panel frame,1,partition_arch_trim,yes,"Permanent partition, finish, trim, or architectural detail"
+window frame /otherroom,1,window_opening,yes,Architectural window/opening or integrated window assembly
