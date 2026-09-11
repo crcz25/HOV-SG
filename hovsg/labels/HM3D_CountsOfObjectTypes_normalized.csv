@@ -1,947 +1,443 @@
 class_label;count
 acoustic panel;12
-advertisement;1
-air conditioner;83
-air freshener;5
-air heater;1
+air conditioner;128
+air freshener;9
 air hockey;1
 air purifier;1
-air vent fan;1
 aisle frame;2
 alarm;138
-alarm clock;39
-alarm controller;10
-album;7
-alcohol bottles;1
+album;11
 amplifier;41
-antique telephone;2
-antlers;1
-apple;1
 appliance;303
 apron;1
-aquarium;3
-arcade;1
-arcade game;8
-armchair;498
-art piece;1
-art/clutter;5
-art/muscle shell;8
-art/statue;2
-artwork;48
+aquarium;5
+arcade game;9
+artwork;5984
 ashtray;2
-audio cable;11
-audio player;1
+audio player;80
 axe;2
-baby chair;1
-baby changing station;3
-baby changing table;2
-baby seat;1
-backpack;40
+baby changing table;6
 backrest;11
 backsplash;2
-bag;769
-bag with sheets;1
-bag with something;1
+bag;932
 ball;47
-ball chair;1
 ball pool;1
-ball pouffe;2
-banner;2
 bar;58
-bar cabinet;11
-bar chair;72
-barbecue;2
-barbell;2
+barbecue;11
 barrel;5
 base;1
 baseball bat;2
-baseball cap;2
-basin;11
-basket;526
-basket of fruits;1
-basket of towels;8
-basket with books;1
-basket with clothes;3
+basket;803
 basketball hoop;1
 basketballs;1
-bath;30
-bath curtain;2
-bath dial;6
-bath grab bar;1
-bath hanger;1
-bath mat;30
-bath shower;1
-bath side table;1
-bathrobe;23
-bathroom accessory;216
-bathroom art;10
-bathroom cabinet;238
-bathroom counter;46
-bathroom glass;3
-bathroom rug;5
-bathroom utensil;159
-bathtub;190
-bathtub knob;1
-bathtub platform;15
-beanbag chair;12
-bed;715
+bathroom accessory;428
+bathtub;253
+bed;781
 bed ladder;1
-bed sheet;16
-bedside table;38
 beer crate;2
 bell;2
 belt;2
-bench;130
+bench;147
 beverage dispenser;2
 bicycle;27
-bicycle helmet;1
-bidet;22
-billiard balls;1
-billiard cue;9
-bin;189
-binder;64
+bicycle helmet;2
+bin;613
 birdhouse;1
-blackboard;4
-blanket;336
-blanket basket;1
-blinds;333
-blouse;2
-board;206
-board game;34
+blanket;445
+board;241
+board game;42
 board with keys;1
-boiler;30
-bonsai tree;1
-book;2434
-book cabinet;4
-book display;40
-book rack;42
-bookshelf;109
-bookstand;2
-boots;4
-bottle;407
+book;2489
+bottle;457
 bottle dispenser;1
 bottle opener;1
-bouquet;29
-bowl;185
-bowl of fruit;47
-bowl of sweets;1
-box;2463
-box of tissue;36
-box pen;1
+bowl;220
+box;3772
 boxing ring;1
 bread;1
-bread bin;2
-bread box;1
+bread box;4
 bricks;2
 bridge;1
-briefcase;10
-brochure;68
-broom;71
-brush;43
-bucket;153
+broom;76
+brush;45
+bucket;154
 buffet;1
-bulletin board;9
-bunk bed;1
-bureau;3
-bust;2
 button;10
-cabinet;2529
-cabinet door;202
-cabinet drawer;36
-cable;11
+cabinet;5020
+cable;46
 cage;3
 cake;1
 calculator;7
 calendar;51
 camera;33
-camping chair;1
-can;186
+can;230
 canal;1
 candelabra;2
 candle;297
 candle holder;54
 candle stand;1
 candlestick;27
-canister;9
 canoe;1
 canopy;3
-canvas;8
-cap;18
 car;6
 card;1
 cardboard;15
-carpet;388
 cart;17
-case;195
-cash register;3
+cash register;5
 casket;32
 cassette;4
 cat;3
-cat food;1
-cat litter box;1
-cat toilet;1
+cat food;2
+cat litter box;2
 cat tree;1
-cd;7
-cd player;2
+cd;9
 ceiling arch;12
 ceiling chassis;1
-ceiling fan;149
-ceiling fan lamp;13
-ceiling fan vent;1
-ceiling fire detector;1
-ceiling hanger;1
 ceiling ladder;1
-ceiling lamp hanger;6
-ceiling lamp rail;1
-ceiling light;100
-ceiling light fixture connection;63
-central heating furnace;1
 ceramics;4
 chain;1
-chair;2339
+chair;3658
 chair stand;1
-chaise;2
-chamber pot;1
-chandelier;103
-changing table;1
-charger;2
 chassis;2
-chess;3
 chest;87
-chest bench;1
-chest of drawers;167
 child car seat;1
 christmas tree;3
 clarinet;5
-cleaner;1
-cleaner brush;1
-cleaning clutter;5
-cleaning fluid;2
-cleaning liquid;4
-cleaning paper;1
-cleaning paste;2
-cleaning powders/ liquids;1
-cleaning sponge;1
-cleaning spray;1
-clock;210
-closet;60
-closet area for hanging clothes;6
+cleaner;191
+clock;343
 closet door;62
-closet rod;19
-closet shelving;7
-closet storage area;4
-cloth;192
+cloth;193
 cloth holder;1
-clothes;748
-clothes bag;13
+clothes;1101
 clothes container;11
-clothes dryer;31
-clothes hamper;14
-clothes hanger;83
-clothes hanger rod;21
-clothes rack;27
-clothing stand;2
-clutter;328
-coach;4
+clothes dryer;33
+clothes rack;80
+clutter;354
 coaster;2
-coat;12
-coat rack;11
-coffee maker;120
-coffee mug;24
+coffee maker;144
 coffee table;162
 compressor;2
-computer;37
-computer desk;24
-computer equipment;18
-computer mouse;42
-computer tower;11
-condensation furnace;1
-condiment;4
+computer;120
+computer equipment;202
 cone;2
-conference phone;1
-console;2
-console pad;2
-console pad charger;1
 construction stuff;1
-container;313
-control;7
-control panel;12
-controller;3
-cook book;2
-cooker;28
-cookies;1
-copier;1
-copier machine;3
-cork board;1
-cosmetics;180
-counter;10
-counter desk;1
+container;520
+controller;89
+cosmetics;331
 counter door;6
-countertop;118
-countertop item;123
+countertop;396
+countertop item;169
 cover;23
-cradle;3
-crate;33
-crayon;1
-crib;15
 cross;6
-cross-trainer;1
 crutches;1
-cuddly toy;47
-cup;199
+cup;249
 curb;3
-curtain;1206
-curtain bar;30
-curtain box;1
-curtain hanger;2
-curtain rail;96
-curtain rod;255
-curtain rod cover;5
-curtain valence;3
-cushion;420
-cutlery;7
-cutting board;51
+curtain;2077
+cushion;421
+cutlery;40
 cyp;1
 dartboard;7
-deck chair;2
 decoder;9
-decor;90
-decoration;2047
-decorative ceramic;1
-decorative lantern;2
-decorative mask;1
-decorative quilt;4
+decoration;2946
 dehumidifier;5
 den;1
-desk;353
-desk cabinet;1
-desk clutter;19
+desk;381
 desk door;1
-desk organizer;1
-detergent;162
-device;293
-dining chair;277
-dining table;63
-dinnerware;14
+dinnerware;378
 diploma;16
 dirt ground;5
-dish;18
-dish cabinet;1
-dish dryer;3
-dish rack;1
-dishes;8
-dishrag;13
+dish rack;4
 dishwasher;138
 dispenser;2
-display;64
-display cabinet;73
-display case;3
-display table;9
-document;44
+display case;67
+document;896
 document holder;4
 dog leash;2
 dog toy;1
 doily;2
 doll;20
-door cabinet;25
 door screen;1
-doormat;98
-draw;1
-drawer;490
-drawer cabinet;1
+drawer;876
 drawer cart;1
-drawer desk;1
-drawer sink table;1
-drawers for clothes;1
-drawing;9
-dress;2
-dresser;198
 dressing table;8
 drill;2
-drinking fountain;2
-drum;24
-dumbbell;33
+drum;29
 dustpan;4
-duvet;2
 dvd;23
-dvd player;3
 easel;6
-easy chair;5
-electric box;78
-electric cable;2
-electric cord;2
-electric device;3
-electric drum;1
-electric guitar;33
-electric heater;2
 electric hub;2
-electric installation;3
-electric kettle;3
-electric outlet;13
-electric percussion;2
-electric plug;1
-electric toothbrush;3
-electric wire;2
 electric wire casing;6
-electrical box;25
-electrical controller;42
-electrical device;1
-electrical installation;1
-electrical switchboard;2
-electricity box;3
-electronics;4
-elephant sculpture;4
+electrical box;125
+electrical device;429
+electrical installation;4
 elevator;11
-emergency sign;1
-end table;16
-entertainment set;6
-entry phone;1
-exercise ball;21
-exercise bike;10
-exercise equipment;50
+exercise ball;22
+exercise bike;14
+exercise equipment;109
 exercise ladder;1
-exercise machine;21
-exercise mat;5
-exercise mat roll;4
-exercising blocks;1
+exercise mat;20
 exhibition panel;6
-exhibition table;1
-exit sign;19
-extension cord;4
-extension lead;1
-extractor hood;96
+extractor hood;162
 eyeglasses;2
-fan;157
-fan air vent;1
-fan coil;17
-faucet;627
-figure;41
-figurine;14
-file;4
-file binder;1
-file cabinet;11
-fire alarm;157
-fire detector;23
+fan;306
+faucet;938
 fire extinguisher;54
-fire pit;2
-fire screen;3
-fire sprinkler;18
-firebox;1
-fireplace;130
-fireplace brush;1
-fireplace sconce;5
-fireplace shelf;3
-fireplace tool set;12
-fireplace utensil;12
-firewood;19
-firewood bag;1
-firewood chest;1
-firewood holder;8
-fish tank;2
-fishing pole;3
-fishing rod;1
-flag;15
-flashlight;1
-flatware;20
-floor mat;76
+fireplace;158
+fireplace tool set;25
+firewood;29
+fishing rod;4
+flag;16
+flashlight;2
 floor stand;4
-flower;189
 flower stand;21
 flowerbed;2
-flowerpot;301
-fluorescent light;14
 flush;4
 flush button;4
 flush push;1
 foam;1
-folder;71
 folding stand;1
-food;43
-food processor;1
+food;64
+food processor;11
 food stand;1
-food tray;4
-foosball table;3
+foosball table;4
 foot spa;1
-foot stand;1
 football;3
-footrest;22
-footstool;8
-fork;8
-frame;136
-framed text;1
-freezer;7
-fruit;19
-frying pan;1
+footstool;154
+frame;364
+fruit;69
 fume cupboard;2
 fur;2
-furnace;27
+furnace;60
 furniture;26
-fuse box;15
 game;3
-game board;1
-game console;1
+game console;6
 gap;2
-garage door motor;9
+garage door motor;14
 garage door opener;3
-garage door opener railing;30
-garage light;9
-garden chair;4
+garage door opener railing;36
 gas box;1
 gas container;1
-gas furnace;1
 gas meter;1
 gauge;1
 gift;8
 glass;175
-glass container;1
 glasses;10
 globe;27
 globe stand;4
-gloves;4
+gloves;5
 glue;1
 goalpost;1
 golf sticks;1
-grab bar;1
-gramophone;1
-grandfather clock;1
-grass;4
+grab bar;12
+grass;7
 grate;3
 gravel;1
-grill;9
 groceries;5
-guitar;55
-guitar case;3
-guitar frame;1
-guitar pedals;2
-guitar stand;3
-guitar straps;5
+guitar;106
 gun;1
 gym rope;1
-gym stepper;3
 hair brush;4
 hair dryer;5
 hammer;4
 hammock;4
-hand cloth;2
 hand dryer;4
-handbag;36
 handcart;1
 handkerchiefs;1
 handle;34
-hanger;333
-hat;107
+hanger;465
+hat;129
 hatch;3
-hats;1
 headboard;7
-headphones;9
-headset;1
-hearth;12
-heater;227
+headphones;10
+heater;582
 heater piping;13
-hi-hat;1
-highchair;8
 holder;6
-hole puncher;1
 holy cross;18
 hook;17
 hose;27
-hot water/cold water knob;14
 hourglass;1
 hoverboard;1
-hunting trophy;22
-hutch;2
 ice maker;2
-icebox;2
-identifier;13
 information;3
 installation;2
 instrument;1
 iron;13
-ironing board;34
-island;7
-jacket;41
-jacuzzi;2
-jar;176
-jars;2
-jewelry;48
-jug;19
-junk;2
+ironing board;44
+jewelry;65
+jug;27
 keg;3
-kettle;66
-keyboard;103
-keyboard box;1
-keyboard cover;1
-keyboard piano;7
-keyboard stand;2
+kettle;102
 keys;19
 kitchen appliance;219
-kitchen cabinet;1185
-kitchen chair;8
-kitchen counter;151
-kitchen decoration;48
-kitchen gloves;1
 kitchen handle;4
-kitchen island;49
-kitchen seating;1
-kitchen sink cabinet;1
-kitchen table;14
-kitchen top;37
-kitchen utensil;147
-kitchenware;4
-knife;21
-knife holder;46
-knife stand;1
+kitchen island;56
+kitchen utensil;231
+knife;74
 knob;26
 lace doily;18
 ladder;69
-lamp;3571
-lamp stand;11
-lamp table;19
-lampshade;25
 landing;5
-lantern;1
-laptop;70
-laundry;4
-laundry bag;6
-laundry basket;73
-lawn;3
+laundry;97
 lawn mower;2
-leaflets;4
-leg rest;2
-level;1
+level;2
 lid;8
-light;53
-light fixture;268
-light switch;22
+light;7782
 lighter;1
 liquid;2
-liquid cleaner;2
-liquid container;1
 locker;16
-lounge chair;15
-lounger;9
-lower cabinet;2
-luggage;31
 machine;52
-magazine;112
-magazine rack;1
-magic marker;4
-mail;1
 mailbox;1
-makeup accessories;1
 mannequin;3
-mantel;7
 map;8
-mascot;18
+mascot;21
 massage bed;7
-mat;142
 material;2
 measuring tape;2
-medal;2
-medal collection;1
-media console;13
 medical lamp;2
 medical object;1
 menu;4
-menu board;4
 meshwork;1
 meter;1
 microphone;1
 microphone accessory;1
 microwave;174
-mirror;1242
-mirror door;8
-mirror frame;79
-mixer;10
-mobile;1
-model;3
+mirror;1334
+model;6
 modem;1
-monitor;156
-moose head/sculpture/hunting trophy;3
 mop;18
 mortar;3
-motion detector;14
 motorcycle;1
-mousepad;1
-mug;20
-music album shelf;1
 music equipment;1
-music equipment stand;5
-music player;11
-music stand;1
-napkin;7
-newspaper;43
-newspaper basket;6
+napkin;10
 nightstand;284
-note;28
-note board;2
-notebook;8
-notes;29
 oar;1
 object;24
 objects;4
-office chair;71
-office table;5
-oil lamp;10
-ornament;302
-ottoman;33
-outlet;13
-oven;136
-oven and stove;67
-oven vent;3
+outlet;54
+oven;343
 overhang;1
-package;1
 pad;46
-painting;1088
-painting roll;1
-painting stuff;1
-painting tray;1
-pan;8
+painting stuff;4
+pan;9
 panel;21
-panel screen;4
 pantry;1
-paper;159
 paper holder;2
 paper storage;15
-paper towel;113
-paper towel dispenser;10
-paper towel holder;2
+paper towel;128
 parapet;113
 partial;1
-patio chair;26
 pavement;4
-payment terminal;2
 pedestal;2
-pen;22
-pen cup;4
-pen drive;1
-pencil;1
-pencil case;1
-pencil holder;1
+pen;30
 pendant;1
-perfume;15
-pet bed;15
+pet bed;24
 pet bowl;4
-phone;6
-photo;331
-photo mount;138
+phone;159
+photo mount;139
 photo stand;1
-piano;23
-piano bench;5
-piano stool;9
-picture;4471
-pillow;3841
-pillow seat;1
-ping pong table;1
-pitcher;8
+piano;48
+pillow;3842
 pitchfork;1
 place mat;15
 plane;2
 plank;5
-planner;1
-plant;750
+plant;1631
 plant ornament;3
-plate;235
-plate of food;21
 platform;22
-platter;1
 playpen;1
 plenum box;2
 pliers;3
-plug;6
 plumbing;10
 plunger;13
-plush toy;132
 podium;4
-pole;1
+pole;2
 pool;2
-pool table;8
+pool table;21
 porcelain;24
-portrait;6
 poster;53
-pot;177
+pot;178
 pot lid;1
-potty;1
 pouches;1
-pouffe;86
-power breaker box;1
-power cord;1
-power strip;2
 press;1
 pressure washer;1
-price tag;50
-printer;102
+printer;106
 product;300
 products;24
-projector screen;7
 prop;1
 pump;2
 punchbag;3
 puppet;3
-purse;6
-rack;284
-rack of weights;3
-rack with shoes;2
-radiator;352
-radio;45
-rag;1
-ragdoll;2
+rag;14
 rail;25
 rake;3
-receipt printer;2
-receipt spike;1
-recliner;1
-record player;13
+receipt printer;3
 records;1
 recuperator;2
-recycle bin;20
-refrigerator;188
-relief;4
-remote control;74
+refrigerator;288
+remote control;91
 rice cooker;1
 riser;1
-robe;16
-rock;3
-rocking chair;20
 rocking horse;3
-rod;11
+rod;12
 roll;3
-rolling pin;1
-roomba;2
 rope;14
-router;3
-row of theater chairs;1
-rug;589
-ruler;1
-safe;6
-salt and pepper;2
-salt and pepper grinder;1
-salver;1
-sandals;3
+router;5
+rug;1350
+safe;7
 saturator;2
-sauna;1
-sauna bowl;5
-sauna heat rocks;1
-sauna heater;4
-sauna oven;1
-sauna seat;2
-sauna support;4
+sauna;18
 saw;6
 saxophone;3
 scale;30
 scanner;1
-scarf;6
-schedule;3
-sconce;18
-scoop;4
-screen;25
+screen;193
 screen frame;1
-screw box;1
 screwdriver;3
-sculpture;65
-seat;66
-secretary;1
+sculpture;214
 security camera;15
-security detector;1
 self-closing mechanism;1
-sensor;138
+sensor;153
 separator;11
 set of valves;1
-sewing box;1
 sewing machine;8
-sewing set;1
-sewing tools;1
-shade;44
-shade rail;4
-shades;8
+sewing tools;3
 shampoo;85
-sheet;22
 sheet music;1
 sheets / clothes;8
-shelf;1408
-shelf / cabinet;7
-shelf clutter;6
-shelf cubby;9
-shelf with art;5
-shelf with clutter;66
-shelf with cosmetics;3
-shelf with shoes;1
-shelving;149
+shelf;2369
 ship toy;1
-shirt;13
 shisha;6
-shoe;761
-shoe cabinet;1
-shoe case;21
-shoe rack;9
-shoe shelf;2
+shoe;783
+shoe rack;37
 shoehorn;1
-shop shelf;6
-shoulder bag;1
 shovel;19
-shower;106
-shower base;7
-shower control;75
-shower curtain;106
-shower door handle;25
-shower glass;7
-shower grab bar;8
-shower hanger;1
-shower hose;42
-shower mat;6
-shower seat;21
-shower shelf;33
-shower tub;19
-showerhead;83
+shower;620
+shower seat;31
 shredder;1
-shutter;29
-side table;126
+side table;249
 sideboard;12
-sign;115
+sign;236
 silicone gun;1
 silicone tube;6
-sink;739
-sink cabinet;119
-sink table;1
+sink;958
 skateboard;2
 skates;1
 ski;2
 sky;2
-sled;1
-sledge;1
+sled;2
 sleeping bag;2
-slippers;7
-small table/stand;14
-smoke alarm;23
-smoke detector;132
-snack;28
-soap;114
-soap bottle;51
-soap dish;23
-soap dish cubby;3
-soap dispenser;113
-soap tray;1
-soapbox;3
-socket;19
+smoke detector;336
+snack;31
+soap;448
 socks;3
-sofa;331
-sofa chair;73
-sofa seat;26
-soft chair;1
+sofa;553
 solarium;3
-sombrero;1
-soundbar;2
-spatula;1
-speaker;233
+speaker;236
 speaker stand;3
-spice boxes;1
-spice rack;18
-spices;2
-spirit level;1
-sponge;3
-spoon;5
-spray can;1
-sprinkler;12
+spices;28
+sponge;4
+spray can;2
+sprinkler;30
 square;1
 stack;2
 stack of books / papers;1
@@ -950,168 +446,103 @@ stack of yarns;1
 stage;3
 stained glass;4
 stand;99
-stand/small table;4
-stapler;3
 star;6
-stationery;23
-statue;62
-statue/art;8
+stationery;46
 steel plate;1
 step stool;7
-stereo;2
 stick;15
-sticker book;2
-sticky notes;1
-stole;1
-stone;5
+stone;9
 stonework;4
-stool;320
-storage;10
-storage bin;68
-storage box;293
-storage cabinet;33
-storage shelving;17
-storage space;3
-storage unit;2
-stove;88
+stool;321
+storage;87
 strings;65
 stroke;1
-strongbox;1
-stuffed animal;81
-subwoofer;1
 sunbed;37
 support;4
 surface;19
 surfboard;4
 swing;3
-switch;34
-swivel chair;1
-t-shirt;1
-table;1304
+switch;56
+table;1509
 table cloth;33
 table pad;8
 table stand;6
-table tennis table;1
+table tennis table;2
 tablet;9
 tambourine;1
-tank;18
-tapestry;1
 tea set;1
-teapot;33
-telephone;148
 telescope;3
 tennis racket;1
 tent;1
 thermometer;2
 thermostat;24
 three;1
-tile;16
+tile;24
 tire;9
-tissue;10
-tissue box;106
+tissue;167
 title;1
 toaster;54
 toaster oven;1
-toilet;561
-toilet brush;148
-toilet brush holder;27
+toilet;594
+toilet brush;175
 toilet cleaner;10
-toilet paper;425
-toilet paper dispenser;114
-toilet seat;2
+toilet paper;563
 toiletry;9
-toiletry bag;2
 tool;100
-tool box;67
-tool rack;3
-toothbrush;15
+tool rack;71
+toothbrush;18
 toothpaste;2
-torch;1
-towel;1089
-towel bar;255
-towel ring;18
-toy;665
+towel;1283
+towel bar;273
+toy;928
 traffic cone;1
 trampoline;1
 trash bag;11
-trash can;315
-tray;151
+tray;157
 treadmill;10
 tree;5
 tree branch;5
 trimmer;1
-trinket;5
 tripod;1
 trolley;4
 trombone;2
-trophy;26
+trophy;55
 trough;1
 trumpet;2
-tv;394
-tv stand;60
+tv;461
+tv stand;79
 typewriter;4
 ukulele;7
 umbrella;38
 umbrella stand;1
-unknown;5970
-unknown/remove;4
-urinal;7
-utensil;21
-vacuum cleaner;71
+unknown;5974
+vacuum cleaner;73
 vanity;2
-vase;430
+vase;643
 vegetables;1
-vessel;33
+vessel;36
 vinyl records;1
 violin;9
 violin case;1
 waffle iron;1
-wall cabinet;60
-wall control;14
-wall electronics;128
-wall hanger;19
-wall hanging decoration;442
-wall sign;35
-wall soap shelf;10
-wall statue;4
-wall toilet paper;24
-wardrobe;447
-wash cabinet;73
-washbasin counter;15
-washcloth;7
-washer-dryer;25
-washing machine;140
+wardrobe;513
+washing machine;223
 washing powder;17
 washing stuff;56
 watch;10
-water basin;2
-water bottle;1
-water dispenser;7
-water fountain;1
+water dispenser;10
 water heater;4
 water meter;1
-water outlet;1
 water pump;2
-water tank;4
+water tank;22
 watering can;6
-weight;13
+weight;51
 weight bench;4
+weights;2
 wheel;10
 wheelbarrow;2
-whine shelf;1
-whiteboard;12
-window curtain;308
-window seat;1
-window shade;98
-window valence;1
-wine;18
-wine cabinet;4
-wine rack;14
-wine storage;1
-wire;3
+window shade;529
+wine;30
+wine storage;19
 wood;36
-workstation;1
-worktop;25
-wreath;10
 wrench;1
-yoga mat;7
