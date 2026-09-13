@@ -16,7 +16,11 @@ main:
   # with.  Graph.query_object's signature default is 1; set 1203 (the object
   # count) to see the whole ranked list instead.
   top_k: 5
-  # Where the three raw CSVs are written. Relative paths resolve against the
+  # Where the raw CSVs are written: objects.csv, rooms.csv, gt_objects.csv and
+  # one search result per ranking method -- object_search_hovsg.csv (ranked by
+  # the stock CLIP query score) and object_search_belief.csv (ranked by the
+  # stored fused object probability p_obj). A previous run's HOV-SG result found
+  # here is what this run is checked against. Relative paths resolve against the
   # HOV-SG repository root, not against Hydra's run directory.
   output_dir: data/search_preprocessing/00824-Dd4bFSTQ8gi
 eval:
@@ -29,11 +33,22 @@ eval:
   # the ones the trajectory never observed; "objects" is only the
   # trajectory-visible subset that HM3DSemanticEvaluator reads.
   gt_object_collection: all_objects
+belief:
+  # The query-conditioned semantic factor of the belief search,
+  #   P_sem(q) = sigma(alpha * (cos(v_i, t_q) - max_{c: cos(t_c, t_q) < tau} cos(v_i, t_c)))
+  # is eq. (semantic) with the query in the place of the object's own label, so
+  # it must use the same alpha and tau the graph was built with -- these mirror
+  # pipeline.semantic_uncertainty_* in config/create_graph.yaml. Neither value is
+  # persisted with the graph, so the run verifies rather than trusts them:
+  # evaluated at each object's own label, P_sem(q) must reproduce the p_sem the
+  # graph stored, and the run fails if it does not.
+  semantic_uncertainty_logit_scale: 100.0
+  semantic_uncertainty_synonym_threshold: 0.75
 validation:
-  # Every class always goes through stock Graph.query_object -- its return
-  # value is what the score table is written from.  This selects how many of
-  # those returns are additionally checked against an independent
-  # reproduction of the procedure behind them, scores included.
+  # Every class always goes through the shared search pipeline, and the hovsg
+  # rows are what its stock-score ranking produced.  This selects how many of
+  # those classes are additionally put through the live Graph.query_object call
+  # and required to match it object for object, in order, scores included.
   # "all", "none", or an integer number of evenly spaced classes to check.
   stock_comparison_classes: all
 models:
