@@ -112,9 +112,10 @@ What is reproduced, and from where
 * **``rooms.csv``'s ``belief`` is the room node's own.**  It is
   ``Room.class_containment_belief``, eq. (noisyor) evaluated over the objects
   the graph assigned to that room and labeled with that class, computed when
-  the graph was built and persisted with the node.  It is empty for a class no
-  object in the room was labeled with, because the room then carries no
-  evidence about that class -- which is not the belief 0.
+  the graph was built and persisted with the node.  A class no object in the
+  room was labeled with gets 0, which is what eq. (noisyor) gives for an empty
+  O(r, c): the product runs over nothing, an empty product is 1, and the belief
+  is 1 - 1.  Every cell of the column is therefore a number.
 
 Output files
 ------------
@@ -927,8 +928,14 @@ def write_rooms_csv(
     ``belief`` is the prediction side of the same cell: the room node's stored
     eq. (noisyor) belief that it contains an instance of ``c``, propagated from
     the ``p_obj`` of the objects the graph assigned to ``r`` and labeled ``c``.
-    It is empty where no object in the room carries that label, because an
-    empty O(r, c) is an absence of evidence rather than a belief of zero.
+
+    A class no object in the room carries gets 0, not an empty cell.  That is
+    eq. (noisyor) evaluated rather than skipped: with O(r, c) empty the product
+    runs over nothing, an empty product is 1, and b(r, c) = 1 - 1 = 0.  The room
+    holds no evidence for ``c``, so it believes nothing about it -- which is the
+    same number.  ``Room.compute_class_containment_beliefs`` stores no entry for
+    such a class, so the zero is supplied here; every cell of the column is a
+    number, and the column can be read without a missing-value rule.
     """
     rows = 0
     with path.open("w", newline="") as file:
@@ -937,6 +944,7 @@ def write_rooms_csv(
         for room in rooms:
             for class_id, class_label in enumerate(classes):
                 count = placement.instances.get((room.room_id, class_id), 0)
+                belief = beliefs.get((room.room_id, class_id))
                 writer.writerow(
                     [
                         scene_id,
@@ -946,7 +954,7 @@ def write_rooms_csv(
                         int(count > 0),
                         int(class_id in placement.classes_in_scene),
                         int(count),
-                        _csv_float(beliefs.get((room.room_id, class_id))),
+                        float(0.0 if belief is None else belief),
                     ]
                 )
                 rows += 1
