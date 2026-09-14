@@ -23,6 +23,7 @@ mkdir -p "$LOG_DIR"
 for scene_id in "${SCENES[@]}"; do
     echo "=== [$(date '+%Y-%m-%d %H:%M:%S')] Starting scene: ${scene_id} ==="
     log_file="${LOG_DIR}/${scene_id}.log"
+    scene_start=$SECONDS
 
     if python application/create_graph.py \
         main.dataset=hm3dsem \
@@ -31,10 +32,19 @@ for scene_id in "${SCENES[@]}"; do
         main.scene_id="${scene_id}" \
         main.save_path="${SAVE_PATH}" \
         2>&1 | tee "${log_file}"; then
-        echo "=== [$(date '+%Y-%m-%d %H:%M:%S')] Finished scene: ${scene_id} ==="
+        scene_elapsed=$((SECONDS - scene_start))
+        echo "=== [$(date '+%Y-%m-%d %H:%M:%S')] Finished scene: ${scene_id} — generation took ${scene_elapsed}s ===" | tee -a "${log_file}"
     else
-        echo "!!! [$(date '+%Y-%m-%d %H:%M:%S')] FAILED scene: ${scene_id} — see ${log_file} — continuing to next scene"
+        scene_elapsed=$((SECONDS - scene_start))
+        echo "!!! [$(date '+%Y-%m-%d %H:%M:%S')] FAILED scene: ${scene_id} — generation ran for ${scene_elapsed}s — see ${log_file} — continuing to next scene" | tee -a "${log_file}"
     fi
+
+    # Free GPU memory left behind by the python process before starting the next scene
+    python -c "import torch; torch.cuda.empty_cache(); torch.cuda.ipc_collect()" 2>/dev/null || true
+    nvidia-smi --query-gpu=memory.used,memory.total --format=csv,noheader || true
+
+    echo "Sleeping 60s before next scene..."
+    sleep 60
 done
 
 echo "All scenes processed."
